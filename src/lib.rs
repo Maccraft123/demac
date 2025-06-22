@@ -1,5 +1,5 @@
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Size {
     Byte,
     Word,
@@ -7,12 +7,12 @@ pub enum Size {
 }
 
 impl Size {
-    fn decode(d: u16) -> Size {
+    fn decode(d: u16) -> Option<Size> {
         match (d >> 6) & 3 {
-            0 => Size::Byte,
-            1 => Size::Word,
-            2 => Size::Long,
-            _ => unreachable!(),
+            0 => Some(Size::Byte),
+            1 => Some(Size::Word),
+            2 => Some(Size::Long),
+            _ => None,
         }
     }
 }
@@ -51,6 +51,12 @@ pub enum IndexReg {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Rm {
+    R(D, D),
+    M(A, A),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Addressing {
     DReg(D),
     AReg(A),
@@ -60,17 +66,16 @@ pub enum Addressing {
     AddrDisplacement(A, u16),
     AddrIndex(u8, A, IndexReg, Size),
     PcDisplacement(u16),
-    PcIndex(D, u8),
+    PcIndex(u8, IndexReg, Size),
     AbsoluteShort(u16),
     AbsoluteWord(u32),
-    /*ImmediateByte(u8),
+    ImmediateByte(u8),
     ImmediateWord(u16),
-    ImmediateLong(u32),*/
-    Immediate,
+    ImmediateLong(u32),
 }
 
 impl Addressing {
-    fn decode_mx(m: u8, x: u8, mut v: impl Iterator<Item = u16>) -> Option<Addressing> {
+    fn decode_mx(m: u8, x: u8, size: Option<Size>, mut v: impl Iterator<Item = u16>) -> Option<Addressing> {
         match m {
             0 => Some(Addressing::DReg(D(x))),
             1 => Some(Addressing::AReg(A(x))),
@@ -80,14 +85,13 @@ impl Addressing {
             5 => Some(Addressing::AddrDisplacement(A(x), v.next()?)),
             6 => {
                 let word = v.next()?;
-                println!("{:x?}", word);
                 let displacement = (word & 0xff) as u8;
                 let reg = if ((word & 0x8000) >> 15) == 0 {
                     IndexReg::DReg(D(((word >> 12) & 7) as u8))
                 } else {
                     IndexReg::AReg(A(((word >> 12) & 7) as u8))
                 };
-                let size = if (word >> 1) & 1 == 0 {
+                let size = if word & 0x800 == 0 {
                     Size::Word
                 } else {
                     Size::Long
@@ -104,9 +108,23 @@ impl Addressing {
                         Some(Addressing::AbsoluteWord(addr))
                     },
                     2 => Some(Addressing::PcDisplacement(v.next()?)),
-                    3 => Some(Addressing::PcIndex(D(0), 0)),
+                    3 => {
+                        let word = v.next()?;
+                        let displacement = (word & 0xff) as u8;
+                        let reg = if ((word & 0x8000) >> 15) == 0 {
+                            IndexReg::DReg(D(((word >> 12) & 7) as u8))
+                        } else {
+                            IndexReg::AReg(A(((word >> 12) & 7) as u8))
+                        };
+                        let size = if word & 0x800 == 0 {
+                            Size::Word
+                        } else {
+                            Size::Long
+                        };
+                        Some(Addressing::PcIndex(displacement, reg, size))
+                    },
                     4 => {
-                        /*match size {
+                        match size? {
                             Size::Byte => Some(Addressing::ImmediateByte(v.next()? as u8)),
                             Size::Word => Some(Addressing::ImmediateWord(v.next()?)),
                             Size::Long => {
@@ -115,8 +133,7 @@ impl Addressing {
                                 let addr = ((hi as u32) << 16) | (lo as u32);
                                 Some(Addressing::ImmediateLong(addr))
                             },
-                        }*/
-                        Some(Addressing::Immediate)
+                        }
                     },
                     _ => None,
                 }
@@ -124,15 +141,18 @@ impl Addressing {
             _ => unreachable!(),
         }
     }
-    fn decode(d: u16, v: impl Iterator<Item = u16>) -> Option<Addressing> {
+    fn noimm(d: u16, v: impl Iterator<Item = u16>) -> Option<Addressing> {
+        Self::decode(d, None, v)
+    }
+    fn decode(d: u16, size: Option<Size>, v: impl Iterator<Item = u16>) -> Option<Addressing> {
         let m = ((d & 0o70) >> 3) as u8;
         let x = (d & 0o7) as u8;
-        Self::decode_mx(m, x, v)
+        Self::decode_mx(m, x, size, v)
     }
-    fn decode_left(d: u16, v: impl Iterator<Item = u16>) -> Option<Addressing> {
+    fn decode_left(d: u16, size: Option<Size>, v: impl Iterator<Item = u16>) -> Option<Addressing> {
         let m = ((d & 0o0700) >> 6) as u8;
         let x = ((d & 0o7000) >> 9) as u8;
-        Self::decode_mx(m, x, v)
+        Self::decode_mx(m, x, size, v)
     }
 }
 
@@ -148,6 +168,56 @@ pub enum BitOp {
 pub enum Direction {
     ToRegister,
     ToMemory,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum OpResult {
+    Register,
+    EffectiveAddress,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Condition {
+    True,
+    False,
+    Higher,
+    LowerOrSame,
+    CarryClear,
+    CarrySet,
+    NotEqual,
+    Equal,
+    OverflowClear,
+    OverflowSet,
+    Plus,
+    Minus,
+    GreaterOrEqual,
+    LessThan,
+    GreaterThan,
+    LessOrEqual,
+}
+
+impl Condition {
+    fn decode(v: u16) -> Condition {
+        match (v & 0x0f00) >> 8 {
+            0x0 => Condition::True,
+            0x1 => Condition::False,
+            0x2 => Condition::Higher,
+            0x3 => Condition::LowerOrSame,
+            0x4 => Condition::CarryClear,
+            0x5 => Condition::CarrySet,
+            0x6 => Condition::NotEqual,
+            0x7 => Condition::Equal,
+            0x8 => Condition::OverflowClear,
+            0x9 => Condition::OverflowSet,
+            0xa => Condition::Plus,
+            0xb => Condition::Minus,
+            0xc => Condition::GreaterOrEqual,
+            0xd => Condition::LessThan,
+            0xe => Condition::GreaterThan,
+            0xf => Condition::LessOrEqual,
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -167,8 +237,59 @@ pub enum Instruction {
     Bit(BitOp, D, Addressing),
     BitImm(BitOp, u8, Addressing),
     Movep(Size, Direction, D, A, u16),
-    Movea(Size, A, Addressing),
+    Movea(Size, Addressing, A),
     Move(Size, Addressing, Addressing),
+    // barely tested
+    MoveFromSr(Addressing),
+    // untested
+    MoveToCcr(Addressing),
+    // untested
+    MoveToSr(Addressing),
+    // untested
+    Negx(Size, Addressing),
+    Clr(Size, Addressing),
+    Neg(Size, Addressing),
+    Not(Size, Addressing),
+    // untested
+    Nbcd(Addressing),
+    Swap(D),
+    Ext(Size, D),
+    Pea(Addressing),
+    Illegal,
+    Tas(Addressing),
+    Tst(Size, Addressing),
+    Trap(u8),
+    Link(A, u16),
+    Unlk(A),
+    // untested
+    MoveUsp(Direction, A),
+    // untested
+    Reset,
+    Nop,
+    Stop(u16),
+    Rte,
+    Rts,
+    Trapv,
+    Rtr,
+    Jsr(Addressing),
+    Jmp(Addressing),
+    // untested
+    Movem(Direction, Size, Addressing, u16),
+    Lea(Addressing, A),
+    // untested
+    Chk(D, Addressing),
+    Addq(Size, u8, Addressing),
+    Subq(Size, u8, Addressing),
+    S(Condition, Addressing),
+    Db(Condition, D, u16),
+    Bra(u16),
+    Bsr(u16),
+    B(Condition, u16),
+    Moveq(u8, D),
+    // untested
+    Sbcd(Rm),
+    Divu(Addressing, D),
+    Divs(Addressing, D),
 }
 
 pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
@@ -190,40 +311,39 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
         0x0 => {
             match nibbles[2] {
                 0x0 | 0x2 | 0xa => {
-                    let imm = SizedImm::new(Size::decode(op), &mut iter)?;
-                    let addr = Addressing::decode(op, &mut iter)?;
-                    if addr == Addressing::Immediate {
-                        match (imm, nibbles[2]) {
-                            (SizedImm::Byte(b), 0x0) => Some(Instruction::OriCcr(b)),
-                            (SizedImm::Word(w), 0x0) => Some(Instruction::OriSr(w)),
-                            (SizedImm::Byte(b), 0x2) => Some(Instruction::AndiCcr(b)),
-                            (SizedImm::Word(w), 0x2) => Some(Instruction::AndiSr(w)),
-                            (SizedImm::Byte(b), 0xa) => Some(Instruction::EoriCcr(b)),
-                            (SizedImm::Word(w), 0xa) => Some(Instruction::EoriSr(w)),
+                    let size = SizedImm::new(Size::decode(op)?, &mut iter)?;
+                    if let Some(addr) = Addressing::decode(op, None, &mut iter) {
+                        match octs[3] {
+                            0 => Some(Instruction::Ori(size, addr)),
+                            1 => Some(Instruction::Andi(size, addr)),
+                            5 => Some(Instruction::Eori(size, addr)),
                             _ => None,
                         }
                     } else {
-                        match nibbles[2] {
-                            0x0 => Some(Instruction::Ori(imm, addr)),
-                            0x2 => Some(Instruction::Andi(imm, addr)),
-                            0xa => Some(Instruction::Eori(imm, addr)),
-                            _ => unreachable!(),
+                        match (octs[3], size) {
+                            (0, SizedImm::Byte(b)) => Some(Instruction::OriCcr(b)),
+                            (0, SizedImm::Word(w)) => Some(Instruction::OriSr(w)),
+                            (1, SizedImm::Byte(b)) => Some(Instruction::AndiCcr(b)),
+                            (1, SizedImm::Word(w)) => Some(Instruction::AndiSr(w)),
+                            (5, SizedImm::Byte(b)) => Some(Instruction::EoriCcr(b)),
+                            (5, SizedImm::Word(w)) => Some(Instruction::EoriSr(w)),
+                            _ => None
                         }
                     }
                 },
-                0x4 => Some(Instruction::Subi(SizedImm::new(Size::decode(op), &mut iter)?, Addressing::decode(op, &mut iter)?)),
-                0x6 => Some(Instruction::Addi(SizedImm::new(Size::decode(op), &mut iter)?, Addressing::decode(op, &mut iter)?)),
-                0xc => Some(Instruction::Cmpi(SizedImm::new(Size::decode(op), &mut iter)?, Addressing::decode(op, &mut iter)?)),
+                0x4 => Some(Instruction::Subi(SizedImm::new(Size::decode(op)?, &mut iter)?, Addressing::noimm(op, &mut iter)?)),
+                0x6 => Some(Instruction::Addi(SizedImm::new(Size::decode(op)?, &mut iter)?, Addressing::noimm(op, &mut iter)?)),
+                0xc => Some(Instruction::Cmpi(SizedImm::new(Size::decode(op)?, &mut iter)?, Addressing::noimm(op, &mut iter)?)),
                 _ if octs[1] != 1 => {
                     match octs[2] {
-                        0 => Some(Instruction::BitImm(BitOp::Tst, iter.next()? as u8, Addressing::decode(op, &mut iter)?)),
-                        1 => Some(Instruction::BitImm(BitOp::Chg, iter.next()? as u8, Addressing::decode(op, &mut iter)?)),
-                        2 => Some(Instruction::BitImm(BitOp::Clr, iter.next()? as u8, Addressing::decode(op, &mut iter)?)),
-                        3 => Some(Instruction::BitImm(BitOp::Set, iter.next()? as u8, Addressing::decode(op, &mut iter)?)),
-                        4 => Some(Instruction::Bit(BitOp::Tst, D(octs[3]), Addressing::decode(op, &mut iter)?)),
-                        5 => Some(Instruction::Bit(BitOp::Chg, D(octs[3]), Addressing::decode(op, &mut iter)?)),
-                        6 => Some(Instruction::Bit(BitOp::Clr, D(octs[3]), Addressing::decode(op, &mut iter)?)),
-                        7 => Some(Instruction::Bit(BitOp::Set, D(octs[3]), Addressing::decode(op, &mut iter)?)),
+                        0 => Some(Instruction::BitImm(BitOp::Tst, iter.next()? as u8, Addressing::noimm(op, &mut iter)?)),
+                        1 => Some(Instruction::BitImm(BitOp::Chg, iter.next()? as u8, Addressing::noimm(op, &mut iter)?)),
+                        2 => Some(Instruction::BitImm(BitOp::Clr, iter.next()? as u8, Addressing::noimm(op, &mut iter)?)),
+                        3 => Some(Instruction::BitImm(BitOp::Set, iter.next()? as u8, Addressing::noimm(op, &mut iter)?)),
+                        4 => Some(Instruction::Bit(BitOp::Tst, D(octs[3]), Addressing::noimm(op, &mut iter)?)),
+                        5 => Some(Instruction::Bit(BitOp::Chg, D(octs[3]), Addressing::noimm(op, &mut iter)?)),
+                        6 => Some(Instruction::Bit(BitOp::Clr, D(octs[3]), Addressing::noimm(op, &mut iter)?)),
+                        7 => Some(Instruction::Bit(BitOp::Set, D(octs[3]), Addressing::noimm(op, &mut iter)?)),
                         _ => unreachable!(),
                     }
                 },
@@ -249,12 +369,172 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                 3 => Size::Word,
                 _ => unreachable!(),
             };
-            let src = Addressing::decode(op, &mut iter)?;
+            let src = Addressing::decode(op, Some(size), &mut iter)?;
             if octs[2] == 1 && size != Size::Byte {
-                Some(Instruction::Movea(size, A(octs[3]), src))
+                Some(Instruction::Movea(size, src, A(octs[3])))
             } else {
-                let dst = Addressing::decode_left(op, &mut iter)?;
-                Some(Instruction::Move(size, dst, src))
+                let dst = Addressing::decode_left(op, None, &mut iter)?;
+                Some(Instruction::Move(size, src, dst))
+            }
+        },
+        4 => {
+            match nibbles[2] {
+                0b0000 if octs[2] == 3 => Some(Instruction::MoveFromSr(Addressing::noimm(op, &mut iter)?)),
+                0b0100 if octs[2] == 3 => Some(Instruction::MoveToCcr(Addressing::decode(op, Some(Size::Byte), &mut iter)?)),
+                0b0110 if octs[2] == 3 => Some(Instruction::MoveToSr(Addressing::decode(op, Some(Size::Word), &mut iter)?)),
+                0b0000 => Some(Instruction::Negx(Size::decode(op)?, Addressing::noimm(op, &mut iter)?)),
+                0b0010 => Some(Instruction::Clr(Size::decode(op)?, Addressing::noimm(op, &mut iter)?)),
+                0b0100 => Some(Instruction::Neg(Size::decode(op)?, Addressing::noimm(op, &mut iter)?)),
+                0b0110 => Some(Instruction::Not(Size::decode(op)?, Addressing::noimm(op, &mut iter)?)),
+                0b1000 => {
+                    if octs[1] == 0 {
+                        match octs[2] {
+                            0 => Some(Instruction::Nbcd(Addressing::noimm(op, &mut iter)?)),
+                            1 => Some(Instruction::Swap(D(octs[0]))),
+                            2 => Some(Instruction::Ext(Size::Word, D(octs[0]))),
+                            3 => Some(Instruction::Ext(Size::Long, D(octs[0]))),
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        match octs[2] {
+                            0 => Some(Instruction::Nbcd(Addressing::noimm(op, &mut iter)?)),
+                            1 => Some(Instruction::Pea(Addressing::decode(op, Some(Size::Long), &mut iter)?)),
+                            2 | 3 => None,
+                            _ => unreachable!(),
+                        }
+                    }
+                },
+                0b1010 => {
+                    match Size::decode(op) {
+                        Some(size) => Some(Instruction::Tst(size, Addressing::noimm(op, &mut iter)?)),
+                        None => {
+                            if octs[1] == 0b111 && octs[0] == 0b100 {
+                                Some(Instruction::Illegal)
+                            } else {
+                                Some(Instruction::Tas(Addressing::noimm(op, &mut iter)?))
+                            }
+                        },
+                    }
+                },
+                0b1110 => {
+                    match nibbles[1] {
+                        0b0100 => Some(Instruction::Trap(nibbles[0])),
+                        0b0101 => {
+                            if nibbles[0] & 0x8 == 0 {
+                                Some(Instruction::Link(A(octs[0]), iter.next()?))
+                            } else {
+                                Some(Instruction::Unlk(A(octs[0])))
+                            }
+                        },
+                        0b0110 => {
+                            let dir = if nibbles[0] & 0x80 == 0 {
+                                Direction::ToMemory
+                            } else {
+                                Direction::ToRegister
+                            };
+                            Some(Instruction::MoveUsp(dir, A(octs[0])))
+                        },
+                        0b0111 => {
+                            match nibbles[0] {
+                                0b0000 => Some(Instruction::Reset),
+                                0b0001 => Some(Instruction::Nop),
+                                0b0010 => Some(Instruction::Stop(iter.next()?)),
+                                0b0011 => Some(Instruction::Rte),
+                                0b0101 => Some(Instruction::Rts),
+                                0b0110 => Some(Instruction::Trapv),
+                                0b0111 => Some(Instruction::Rtr),
+                                _ => None,
+                            }
+                        },
+                        _ => {
+                            match octs[2] {
+                                0b010 => Some(Instruction::Jsr(Addressing::noimm(op, &mut iter)?)),
+                                0b011 => Some(Instruction::Jmp(Addressing::noimm(op, &mut iter)?)),
+                                _ => None,
+                            }
+                        },
+                    }
+                },
+                _ => {
+                    match octs[2] {
+                        0b011 | 0b010 => {
+                            let dir = match octs[3] {
+                                0b100 => Direction::ToRegister,
+                                0b110 => Direction::ToMemory,
+                                _ => None?,
+                            };
+                            let size = match octs[2] {
+                                0b010 => Size::Word,
+                                0b011 => Size::Long,
+                                _ => unreachable!(),
+                            };
+                            let mask = iter.next()?;
+                            Some(Instruction::Movem(dir, size, Addressing::noimm(op, &mut iter)?, mask))
+                        },
+                        0b111 => Some(Instruction::Lea(Addressing::noimm(op, &mut iter)?, A(octs[3]))),
+                        0b110 => Some(Instruction::Chk(D(octs[3]), Addressing::noimm(op, &mut iter)?)),
+                        _ => None,
+                    }
+                },
+            }
+        },
+        0b0101 => {
+            match Size::decode(op) {
+                Some(size) => {
+                    if octs[2] & 0b100 == 0 {
+                        Some(Instruction::Addq(size, octs[3], Addressing::noimm(op, &mut iter)?))
+                    } else {
+                        Some(Instruction::Subq(size, octs[3], Addressing::noimm(op, &mut iter)?))
+                    }
+                },
+                None => {
+                    if octs[1] == 0b001 {
+                        Some(Instruction::Db(Condition::decode(op), D(octs[0]), iter.next()?))
+                    } else {
+                        Some(Instruction::S(Condition::decode(op), Addressing::noimm(op, &mut iter)?))
+                    }
+                },
+            }
+        },
+        0b0110 => {
+            let target = if op & 0xff == 0 {
+                iter.next()?
+            } else {
+                op & 0xff
+            };
+            match Condition::decode(op) {
+                Condition::True => Some(Instruction::Bra(target)),
+                Condition::False => Some(Instruction::Bsr(target)),
+                cond => Some(Instruction::B(cond, target)),
+            }
+        },
+        0b0111 if nibbles[2] & 1 == 0 => Some(Instruction::Moveq(op as u8, D(octs[3]))),
+        0b1000 => {
+            match Size::decode(op) {
+                Some(size) => {
+                    if nibbles[1] == 0 && nibbles[2] & 1 == 1 {
+                        let rm = if octs[1] & 1 == 0 {
+                            Rm::R(D(octs[0]), D(octs[3]))
+                        } else {
+                            Rm::M(A(octs[0]), A(octs[3]))
+                        };
+                        Some(Instruction::Sbcd(rm))
+                    } else {
+                        let dir = if octs[2] & 0b100 == 0 {
+                            OpResult::Register
+                        } else {
+                            OpResult::EffectiveAddress
+                        };
+                        todo!("or")
+                    }
+                }
+                None => {
+                    if octs[2] == 0b011 {
+                        Some(Instruction::Divu(Addressing::decode(op, Some(Size::Word), &mut iter)?, D(octs[3])))
+                    } else {
+                        Some(Instruction::Divs(Addressing::decode(op, Some(Size::Word), &mut iter)?, D(octs[3])))
+                    }
+                },
             }
         },
         _ => None,
@@ -263,7 +543,7 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Instruction, Addressing, Size, D, SizedImm, A, IndexReg, BitOp, Direction};
+    use super::{Instruction, Addressing, Size, D, SizedImm, A, IndexReg, BitOp, Direction, Condition};
 
     // NOTICE
     // Test data shamelessly stolen from
@@ -723,11 +1003,787 @@ mod tests {
             Instruction::Movep(Size::Long, Direction::ToRegister, D(2), A(0), 0)
         );
     }
-/*    #[test]
+    #[test]
     fn r#move() {
         test!(
             [0x11fc, 0x0064, 0xffe0],
-            Instruction::Move(Addressing::ImmediateByte(0x64))
+            Instruction::Move(Size::Byte, Addressing::ImmediateByte(0x64), Addressing::AbsoluteShort(0xffe0))
         );
-    }*/
+        test!(
+            [0x31fc, 0x03e8, 0xffe0],
+            Instruction::Move(Size::Word, Addressing::ImmediateWord(0x03e8), Addressing::AbsoluteShort(0xffe0))
+        );
+        test!(
+            [0x21fc, 0x05f5, 0xe100, 0xffe0],
+            Instruction::Move(Size::Long, Addressing::ImmediateLong(0x05f5_e100), Addressing::AbsoluteShort(0xffe0))
+        );
+        test!(
+            [0x123c, 0x0020],
+            Instruction::Move(Size::Byte, Addressing::ImmediateByte(0x20), Addressing::DReg(D(1)))
+        );
+        test!(
+            [0x203c, 0x6000, 0x0003],
+            Instruction::Move(Size::Long, Addressing::ImmediateLong(0x6000_0003), Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x32bc, 0x0101],
+            Instruction::Move(Size::Word, Addressing::ImmediateWord(0x101), Addressing::Addr(A(1)))
+        );
+        test!(
+            [0x157c, 0x003c, 0x0002],
+            Instruction::Move(Size::Byte, Addressing::ImmediateByte(0x3c), Addressing::AddrDisplacement(A(2), 0x2))
+        );
+        test!(
+            [0x337c, 0x2fa0, 0x0010],
+            Instruction::Move(Size::Word, Addressing::ImmediateWord(0x2fa0), Addressing::AddrDisplacement(A(1), 0x10))
+        );
+        test!(
+            [0x36fc, 0x0000],
+            Instruction::Move(Size::Word, Addressing::ImmediateWord(0), Addressing::AddrPostIncrement(A(3)))
+        );
+        test!(
+            [0x373c, 0x0000],
+            Instruction::Move(Size::Word, Addressing::ImmediateWord(0), Addressing::AddrPreDecrement(A(3)))
+        );
+        test!(
+            [0x31f8, 0xff0a, 0xff08],
+            Instruction::Move(Size::Word, Addressing::AbsoluteShort(0xff0a), Addressing::AbsoluteShort(0xff08))
+        );
+        test!(
+            [0x33f8, 0xff0a, 0xffff, 0xff08],
+            Instruction::Move(Size::Word, Addressing::AbsoluteShort(0xff0a), Addressing::AbsoluteWord(0xffff_ff08))
+        );
+        test!(
+            [0x31f9, 0xffff, 0x01a5, 0xffe0],
+            Instruction::Move(Size::Word, Addressing::AbsoluteWord(0xffff_01a5), Addressing::AbsoluteShort(0xffe0))
+        );
+        test!(
+            [0x3038, 0xee18],
+            Instruction::Move(Size::Word, Addressing::AbsoluteShort(0xee18), Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x10b8, 0xff0b],
+            Instruction::Move(Size::Byte, Addressing::AbsoluteShort(0xff0b), Addressing::Addr(A(0)))
+        );
+        test!(
+            [0x1178, 0xff0b, 0x0022],
+            Instruction::Move(Size::Byte, Addressing::AbsoluteShort(0xff0b), Addressing::AddrDisplacement(A(0), 0x22))
+        );
+        test!(
+            [0x10f8, 0xff0b],
+            Instruction::Move(Size::Byte, Addressing::AbsoluteShort(0xff0b), Addressing::AddrPostIncrement(A(0)))
+        );
+        test!(
+            [0x1138, 0xff0b],
+            Instruction::Move(Size::Byte, Addressing::AbsoluteShort(0xff0b), Addressing::AddrPreDecrement(A(0)))
+        );
+        test!(
+            [0x11c0, 0xf604],
+            Instruction::Move(Size::Byte, Addressing::DReg(D(0)), Addressing::AbsoluteShort(0xf604))
+        );
+        test!(
+            [0x23c1, 0xffff, 0xffe0],
+            Instruction::Move(Size::Long, Addressing::DReg(D(1)), Addressing::AbsoluteWord(0xffff_ffe0))
+        );
+        test!(
+            [0x3601],
+            Instruction::Move(Size::Word, Addressing::DReg(D(1)), Addressing::DReg(D(3)))
+        );
+        test!(
+            [0x2e00],
+            Instruction::Move(Size::Long, Addressing::DReg(D(0)), Addressing::DReg(D(7)))
+        );
+        test!(
+            [0x3c80],
+            Instruction::Move(Size::Word, Addressing::DReg(D(0)), Addressing::Addr(A(6)))
+        );
+        test!(
+            [0x1143, 0x0026],
+            Instruction::Move(Size::Byte, Addressing::DReg(D(3)), Addressing::AddrDisplacement(A(0), 0x26))
+        );
+        test!(
+            [0x34c3],
+            Instruction::Move(Size::Word, Addressing::DReg(D(3)), Addressing::AddrPostIncrement(A(2)))
+        );
+        test!(
+            [0x3503],
+            Instruction::Move(Size::Word, Addressing::DReg(D(3)), Addressing::AddrPreDecrement(A(2)))
+        );
+        test!(
+            [0x1213],
+            Instruction::Move(Size::Byte, Addressing::Addr(A(3)), Addressing::DReg(D(1)))
+        );
+        test!(
+            [0x1893],
+            Instruction::Move(Size::Byte, Addressing::Addr(A(3)), Addressing::Addr(A(4)))
+        );
+        test!(
+            [0x1551, 0x0003],
+            Instruction::Move(Size::Byte, Addressing::Addr(A(1)), Addressing::AddrDisplacement(A(2), 3))
+        );
+        test!(
+            [0x2550, 0x0080],
+            Instruction::Move(Size::Long, Addressing::Addr(A(0)), Addressing::AddrDisplacement(A(2), 0x80))
+        );
+        test!(
+            [0x18d3],
+            Instruction::Move(Size::Byte, Addressing::Addr(A(3)), Addressing::AddrPostIncrement(A(4)))
+        );
+        test!(
+            [0x1913],
+            Instruction::Move(Size::Byte, Addressing::Addr(A(3)), Addressing::AddrPreDecrement(A(4)))
+        );
+        test!(
+            [0x31e8, 0x0034, 0xff08],
+            Instruction::Move(Size::Word, Addressing::AddrDisplacement(A(0), 0x34), Addressing::AbsoluteShort(0xff08))
+        );
+        test!(
+            [0x1029, 0x0008],
+            Instruction::Move(Size::Byte, Addressing::AddrDisplacement(A(1), 0x8), Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x1c28, 0x0026],
+            Instruction::Move(Size::Byte, Addressing::AddrDisplacement(A(0), 0x26), Addressing::DReg(D(6)))
+        );
+        test!(
+            [0x2629, 0x0064],
+            Instruction::Move(Size::Long, Addressing::AddrDisplacement(A(1), 0x64), Addressing::DReg(D(3)))
+        );
+        test!(
+            [0x14aa, 0x0001],
+            Instruction::Move(Size::Byte, Addressing::AddrDisplacement(A(2), 0x1), Addressing::Addr(A(2)))
+        );
+        test!(
+            [0x156a, 0x0003, 0x0002],
+            Instruction::Move(Size::Byte, Addressing::AddrDisplacement(A(2), 0x3), Addressing::AddrDisplacement(A(2), 0x2))
+        );
+        test!(
+            [0x3569, 0x0014, 0x0054],
+            Instruction::Move(Size::Word, Addressing::AddrDisplacement(A(1), 0x14), Addressing::AddrDisplacement(A(2), 0x54))
+        );
+        test!(
+            [0x2569, 0x0010, 0x0050],
+            Instruction::Move(Size::Long, Addressing::AddrDisplacement(A(1), 0x10), Addressing::AddrDisplacement(A(2), 0x50))
+        );
+        test!(
+            [0x14ea, 0x0001],
+            Instruction::Move(Size::Byte, Addressing::AddrDisplacement(A(2), 0x1), Addressing::AddrPostIncrement(A(2)))
+        );
+        test!(
+            [0x152a, 0x0001],
+            Instruction::Move(Size::Byte, Addressing::AddrDisplacement(A(2), 0x1), Addressing::AddrPreDecrement(A(2)))
+        );
+        test!(
+            [0x11dc, 0xffb2],
+            Instruction::Move(Size::Byte, Addressing::AddrPostIncrement(A(4)), Addressing::AbsoluteShort(0xffb2))
+        );
+        test!(
+            [0x101c],
+            Instruction::Move(Size::Byte, Addressing::AddrPostIncrement(A(4)), Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x201c],
+            Instruction::Move(Size::Long, Addressing::AddrPostIncrement(A(4)), Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x2298],
+            Instruction::Move(Size::Long, Addressing::AddrPostIncrement(A(0)), Addressing::Addr(A(1)))
+        );
+        test!(
+            [0x2559, 0x0074],
+            Instruction::Move(Size::Long, Addressing::AddrPostIncrement(A(1)), Addressing::AddrDisplacement(A(2), 0x74))
+        );
+        test!(
+            [0x22d8],
+            Instruction::Move(Size::Long, Addressing::AddrPostIncrement(A(0)), Addressing::AddrPostIncrement(A(1)))
+        );
+        test!(
+            [0x1023],
+            Instruction::Move(Size::Byte, Addressing::AddrPreDecrement(A(3)), Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x3024],
+            Instruction::Move(Size::Word, Addressing::AddrPreDecrement(A(4)), Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x3325],
+            Instruction::Move(Size::Word, Addressing::AddrPreDecrement(A(5)), Addressing::AddrPreDecrement(A(1)))
+        );
+        test!(
+            [0x21c9, 0xe446],
+            Instruction::Move(Size::Long, Addressing::AReg(A(1)), Addressing::AbsoluteShort(0xe446))
+        );
+        test!(
+            [0x2009],
+            Instruction::Move(Size::Long, Addressing::AReg(A(1)), Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x2089],
+            Instruction::Move(Size::Long, Addressing::AReg(A(1)), Addressing::Addr(A(0)))
+        );
+        test!(
+            [0x314a, 0x003c],
+            Instruction::Move(Size::Word, Addressing::AReg(A(2)), Addressing::AddrDisplacement(A(0), 0x3c))
+        );
+        test!(
+            [0x2e8a],
+            Instruction::Move(Size::Long, Addressing::AReg(A(2)), Addressing::Addr(A(7)))
+        );
+        test!(
+            [0x2eca],
+            Instruction::Move(Size::Long, Addressing::AReg(A(2)), Addressing::AddrPostIncrement(A(7)))
+        );
+        test!(
+            [0x2f0a],
+            Instruction::Move(Size::Long, Addressing::AReg(A(2)), Addressing::AddrPreDecrement(A(7)))
+        );
+        test!(
+            [0x11f2, 0x6014, 0xe446],
+            Instruction::Move(Size::Byte, Addressing::AddrIndex(0x14, A(2), IndexReg::DReg(D(6)), Size::Word), Addressing::AbsoluteShort(0xe446))
+        );
+        test!(
+            [0x1232, 0x0000],
+            Instruction::Move(Size::Byte, Addressing::AddrIndex(0, A(2), IndexReg::DReg(D(0)), Size::Word), Addressing::DReg(D(1)))
+        );
+        test!(
+            [0x3c34, 0x0004],
+            Instruction::Move(Size::Word, Addressing::AddrIndex(0x4, A(4), IndexReg::DReg(D(0)), Size::Word), Addressing::DReg(D(6)))
+        );
+        test!(
+            [0x1833, 0x401d],
+            Instruction::Move(Size::Byte, Addressing::AddrIndex(0x1d, A(3), IndexReg::DReg(D(4)), Size::Word), Addressing::DReg(D(4)))
+        );
+        test!(
+            [0x16b2, 0x2000],
+            Instruction::Move(Size::Byte, Addressing::AddrIndex(0, A(2), IndexReg::DReg(D(2)), Size::Word), Addressing::Addr(A(3)))
+        );
+        test!(
+            [0x1772, 0x6014, 0x003c],
+            Instruction::Move(Size::Byte, Addressing::AddrIndex(0x14, A(2), IndexReg::DReg(D(6)), Size::Word), Addressing::AddrDisplacement(A(3), 0x3c))
+        );
+        test!(
+            [0x16f2, 0x2000],
+            Instruction::Move(Size::Byte, Addressing::AddrIndex(0, A(2), IndexReg::DReg(D(2)), Size::Word), Addressing::AddrPostIncrement(A(3)))
+        );
+        test!(
+            [0x1732, 0x2000],
+            Instruction::Move(Size::Byte, Addressing::AddrIndex(0, A(2), IndexReg::DReg(D(2)), Size::Word), Addressing::AddrPreDecrement(A(3)))
+        );
+        test!(
+            [0x11fb, 0x305e, 0xe446],
+            Instruction::Move(Size::Byte, Addressing::PcIndex(0x5e, IndexReg::DReg(D(3)), Size::Word), Addressing::AbsoluteShort(0xe446))
+        );
+        test!(
+            [0x143b, 0x005e],
+            Instruction::Move(Size::Byte, Addressing::PcIndex(0x5e, IndexReg::DReg(D(0)), Size::Word), Addressing::DReg(D(2)))
+        );
+        test!(
+            [0x12bb, 0x005e],
+            Instruction::Move(Size::Byte, Addressing::PcIndex(0x5e, IndexReg::DReg(D(0)), Size::Word), Addressing::Addr(A(1)))
+        );
+        test!(
+            [0x137b, 0x005e, 0x0022],
+            Instruction::Move(Size::Byte, Addressing::PcIndex(0x5e, IndexReg::DReg(D(0)), Size::Word), Addressing::AddrDisplacement(A(1), 0x22))
+        );
+        test!(
+            [0x46fc, 0x2700],
+            Instruction::MoveToSr(Addressing::ImmediateWord(0x2700))
+        );
+    }
+    #[test]
+    fn movea() {
+        test!(
+            [0x387c, 0x6000],
+            Instruction::Movea(Size::Word, Addressing::ImmediateWord(0x6000), A(4))
+        );
+        test!(
+            [0x3878, 0xee4a],
+            Instruction::Movea(Size::Word, Addressing::AbsoluteShort(0xee4a), A(4))
+        );
+        test!(
+            [0x3841],
+            Instruction::Movea(Size::Word, Addressing::DReg(D(1)), A(4))
+        );
+        test!(
+            [0x2c4a],
+            Instruction::Movea(Size::Long, Addressing::AReg(A(2)), A(6))
+        );
+        test!(
+            [0x3253],
+            Instruction::Movea(Size::Word, Addressing::Addr(A(3)), A(1))
+        );
+        test!(
+            [0x326b, 0x002c],
+            Instruction::Movea(Size::Word, Addressing::AddrDisplacement(A(3), 0x2c), A(1))
+        );
+        test!(
+            [0x2459],
+            Instruction::Movea(Size::Long, Addressing::AddrPostIncrement(A(1)), A(2))
+        );
+        test!(
+            [0x2461],
+            Instruction::Movea(Size::Long, Addressing::AddrPreDecrement(A(1)), A(2))
+        );
+        test!(
+            [0x2457],
+            Instruction::Movea(Size::Long, Addressing::Addr(A(7)), A(2))
+        );
+        test!(
+            [0x245f],
+            Instruction::Movea(Size::Long, Addressing::AddrPostIncrement(A(7)), A(2))
+        );
+        test!(
+            [0x2467],
+            Instruction::Movea(Size::Long, Addressing::AddrPreDecrement(A(7)), A(2))
+        );
+        test!(
+            [0x2674, 0x0000],
+            Instruction::Movea(Size::Long, Addressing::AddrIndex(0x00, A(4), IndexReg::DReg(D(0)), Size::Word), A(3))
+        );
+        test!(
+            [0x2674, 0x0018],
+            Instruction::Movea(Size::Long, Addressing::AddrIndex(0x18, A(4), IndexReg::DReg(D(0)), Size::Word), A(3))
+        );
+    }
+    #[test]
+    fn clr() {
+        test!(
+            [0x4242],
+            Instruction::Clr(Size::Word, Addressing::DReg(D(2)))
+        );
+        test!(
+            [0x4280],
+            Instruction::Clr(Size::Long, Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x4278, 0x8500],
+            Instruction::Clr(Size::Word, Addressing::AbsoluteShort(0x8500))
+        );
+        test!(
+            [0x4228, 0x003c],
+            Instruction::Clr(Size::Byte, Addressing::AddrDisplacement(A(0), 0x3c))
+        );
+        test!(
+            [0x4268, 0x001a],
+            Instruction::Clr(Size::Word, Addressing::AddrDisplacement(A(0), 0x1a))
+        );
+        test!(
+            [0x4291],
+            Instruction::Clr(Size::Long, Addressing::Addr(A(1)))
+        );
+        test!(
+            [0x42a9, 0x0004],
+            Instruction::Clr(Size::Long, Addressing::AddrDisplacement(A(1), 0x4))
+        );
+        test!(
+            [0x4299],
+            Instruction::Clr(Size::Long, Addressing::AddrPostIncrement(A(1)))
+        );
+        test!(
+            [0x42a1],
+            Instruction::Clr(Size::Long, Addressing::AddrPreDecrement(A(1)))
+        );
+    }
+    #[test]
+    fn neg() {
+        test!(
+            [0x4478, 0xfe26],
+            Instruction::Neg(Size::Word, Addressing::AbsoluteShort(0xfe26))
+        );
+        test!(
+            [0x4480],
+            Instruction::Neg(Size::Long, Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x4451],
+            Instruction::Neg(Size::Word, Addressing::Addr(A(1)))
+        );
+        test!(
+            [0x4469, 0x001a],
+            Instruction::Neg(Size::Word, Addressing::AddrDisplacement(A(1), 0x1a))
+        );
+        test!(
+            [0x4459],
+            Instruction::Neg(Size::Word, Addressing::AddrPostIncrement(A(1)))
+        );
+        test!(
+            [0x4461],
+            Instruction::Neg(Size::Word, Addressing::AddrPreDecrement(A(1)))
+        );
+    }
+    #[test]
+    fn not() {
+        test!(
+            [0x4678, 0xfe26],
+            Instruction::Not(Size::Word, Addressing::AbsoluteShort(0xfe26))
+        );
+        test!(
+            [0x4680],
+            Instruction::Not(Size::Long, Addressing::DReg(D(0)))
+        );
+        test!(
+            [0x4651],
+            Instruction::Not(Size::Word, Addressing::Addr(A(1)))
+        );
+        test!(
+            [0x4669, 0x001a],
+            Instruction::Not(Size::Word, Addressing::AddrDisplacement(A(1), 0x1a))
+        );
+        test!(
+            [0x4659],
+            Instruction::Not(Size::Word, Addressing::AddrPostIncrement(A(1)))
+        );
+        test!(
+            [0x4661],
+            Instruction::Not(Size::Word, Addressing::AddrPreDecrement(A(1)))
+        );
+    }
+    #[test]
+    fn swap() {
+        test!(
+            [0x4840],
+            Instruction::Swap(D(0))
+        );
+    }
+    #[test]
+    fn ext() {
+        test!(
+            [0x4880],
+            Instruction::Ext(Size::Word, D(0))
+        );
+        test!(
+            [0x48c1],
+            Instruction::Ext(Size::Long, D(1))
+        );
+    }
+    #[test]
+    fn pea() {
+        test!(
+            [0x4878, 0xe53c],
+            Instruction::Pea(Addressing::AbsoluteShort(0xe53c))
+        );
+        test!(
+            [0x4852],
+            Instruction::Pea(Addressing::Addr(A(2)))
+        );
+        test!(
+            [0x4868, 0x002a],
+            Instruction::Pea(Addressing::AddrDisplacement(A(0), 0x2a))
+        );
+    }
+    #[test]
+    fn illegal() {
+        test!(
+            [0x4afc],
+            Instruction::Illegal
+        );
+    }
+    #[test]
+    fn tas() {
+        test!(
+            [0x4af8, 0xfe00],
+            Instruction::Tas(Addressing::AbsoluteShort(0xfe00))
+        );
+        test!(
+            [0x4ac1],
+            Instruction::Tas(Addressing::DReg(D(1)))
+        );
+        test!(
+            [0x4ad2],
+            Instruction::Tas(Addressing::Addr(A(2)))
+        );
+        test!(
+            [0x4ae8, 0x002a],
+            Instruction::Tas(Addressing::AddrDisplacement(A(0), 0x2a))
+        );
+    }
+    #[test]
+    fn tst() {
+        test!(
+            [0x4a04],
+            Instruction::Tst(Size::Byte, Addressing::DReg(D(4)))
+        );
+        test!(
+            [0x4a81],
+            Instruction::Tst(Size::Long, Addressing::DReg(D(1)))
+        );
+        test!(
+            [0x4a38, 0xaa80],
+            Instruction::Tst(Size::Byte, Addressing::AbsoluteShort(0xaa80))
+        );
+        test!(
+            [0x4a78, 0xaa80],
+            Instruction::Tst(Size::Word, Addressing::AbsoluteShort(0xaa80))
+        );
+        test!(
+            [0x4a79, 0x00a1, 0x000c],
+            Instruction::Tst(Size::Word, Addressing::AbsoluteWord(0xa1000c))
+        );
+        test!(
+            [0x4ab9, 0x00a1, 0x0008],
+            Instruction::Tst(Size::Long, Addressing::AbsoluteWord(0xa10008))
+        );
+        test!(
+            [0x4a54],
+            Instruction::Tst(Size::Word, Addressing::Addr(A(4)))
+        );
+        test!(
+            [0x4a69, 0x001a],
+            Instruction::Tst(Size::Word, Addressing::AddrDisplacement(A(1), 0x1a))
+        );
+    }
+    #[test]
+    fn trap() {
+        test!(
+            [0x4e41],
+            Instruction::Trap(1)
+        );
+    }
+    #[test]
+    fn trapv() {
+        test!(
+            [0x4e76],
+            Instruction::Trapv
+        );
+    }
+    #[test]
+    fn link() {
+        test!(
+            [0x4e54, 0x1087],
+            Instruction::Link(A(4), 0x1087)
+        );
+    }
+    #[test]
+    fn unlk() {
+        test!(
+            [0x4e58],
+            Instruction::Unlk(A(0))
+        );
+    }
+    #[test]
+    fn nop() {
+        test!(
+            [0x4e71],
+            Instruction::Nop
+        );
+    }
+    #[test]
+    fn stop() {
+        test!(
+            [0x4e72, 0x2500],
+            Instruction::Stop(0x2500)
+        );
+    }
+    #[test]
+    fn rte() {
+        test!(
+            [0x4e73],
+            Instruction::Rte
+        );
+    }
+    #[test]
+    fn rtr() {
+        test!(
+            [0x4e77],
+            Instruction::Rtr
+        );
+    }
+    #[test]
+    fn rts() {
+        test!(
+            [0x4e75],
+            Instruction::Rts
+        );
+    }
+    #[test]
+    fn jsr() {
+        test!(
+            [0x4eb9, 0x0004, 0xb98c],
+            Instruction::Jsr(Addressing::AbsoluteWord(0x4b98c))
+        );
+    }
+    #[test]
+    fn jmp() {
+        test!(
+            [0x4ed1],
+            Instruction::Jmp(Addressing::Addr(A(1)))
+        );
+        test!(
+            [0x4ee9, 0x0010],
+            Instruction::Jmp(Addressing::AddrDisplacement(A(1), 0x10))
+        );
+        test!(
+            [0x4ef9, 0x0006, 0x5a70],
+            Instruction::Jmp(Addressing::AbsoluteWord(0x65a70))
+        );
+    }
+    #[test]
+    fn lea() {
+        test!(
+            [0x41f8, 0xfff4],
+            Instruction::Lea(Addressing::AbsoluteShort(0xfff4), A(0))
+        );
+        test!(
+            [0x43f9, 0xffff, 0x7cc0],
+            Instruction::Lea(Addressing::AbsoluteWord(0xffff_7cc0), A(1))
+        );
+        test!(
+            [0x45d6],
+            Instruction::Lea(Addressing::Addr(A(6)), A(2))
+        );
+        test!(
+            [0x43e9, 0x0130],
+            Instruction::Lea(Addressing::AddrDisplacement(A(1), 0x130), A(1))
+        );
+        test!(
+            [0x45f3, 0x3000],
+            Instruction::Lea(Addressing::AddrIndex(0x0, A(3), IndexReg::DReg(D(3)), Size::Word), A(2))
+        );
+    }
+    #[test]
+    fn scc() {
+        test!(
+            [0x50f8, 0xf000],
+            Instruction::S(Condition::True, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x51f8, 0xf000],
+            Instruction::S(Condition::False, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x52f8, 0xf000],
+            Instruction::S(Condition::Higher, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x53f8, 0xf000],
+            Instruction::S(Condition::LowerOrSame, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x54f8, 0xf000],
+            Instruction::S(Condition::CarryClear, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x55f8, 0xf000],
+            Instruction::S(Condition::CarrySet, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x56f8, 0xf000],
+            Instruction::S(Condition::NotEqual, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x57f8, 0xf000],
+            Instruction::S(Condition::Equal, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x58f8, 0xf000],
+            Instruction::S(Condition::OverflowClear, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x59f8, 0xf000],
+            Instruction::S(Condition::OverflowSet, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x5af8, 0xf000],
+            Instruction::S(Condition::Plus, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x5bf8, 0xf000],
+            Instruction::S(Condition::Minus, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x5cf8, 0xf000],
+            Instruction::S(Condition::GreaterOrEqual, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x5df8, 0xf000],
+            Instruction::S(Condition::LessThan, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x5ef8, 0xf000],
+            Instruction::S(Condition::GreaterThan, Addressing::AbsoluteShort(0xf000))
+        );
+        test!(
+            [0x5ff8, 0xf000],
+            Instruction::S(Condition::LessOrEqual, Addressing::AbsoluteShort(0xf000))
+        );
+    }
+    #[test]
+    fn dbcc() {
+        test!(
+            [0x51c8, 0x556a],
+            Instruction::Db(Condition::False, D(0), 0x556a)
+        );
+        test!(
+            [0x51cb, 0xffa0],
+            Instruction::Db(Condition::False, D(3), 0xffa0)
+        );
+        test!(
+            [0x57c9, 0xfffc],
+            Instruction::Db(Condition::Equal, D(1), 0xfffc)
+        );
+        test!(
+            [0x5bcc, 0xffdc],
+            Instruction::Db(Condition::Minus, D(4), 0xffdc)
+        );
+    }
+    #[test]
+    fn branches() {
+        test!(
+            [0x6024],
+            Instruction::Bra(0x24)
+        );
+        test!(
+            [0x6000, 0x4e1a],
+            Instruction::Bra(0x4e1a)
+        );
+        test!(
+            [0x6110],
+            Instruction::Bsr(0x10)
+        );
+        test!(
+            [0x6510],
+            Instruction::B(Condition::CarrySet, 0x10)
+        );
+    }
+    #[test]
+    fn moveq() {
+        test!(
+            [0x7280],
+            Instruction::Moveq(0x80, D(1))
+        );
+    }
+    #[test]
+    fn divs() {
+        test!(
+            [0x81fc, 0x000a],
+            Instruction::Divs(Addressing::ImmediateWord(0xa), D(0))
+        );
+    }
+    #[test]
+    fn divu() {
+        test!(
+            [0x82f8, 0xf314],
+            Instruction::Divu(Addressing::AbsoluteShort(0xf314), D(1))
+        );
+        test!(
+            [0x82c1],
+            Instruction::Divu(Addressing::DReg(D(1)), D(1))
+        );
+        test!(
+            [0x82d1],
+            Instruction::Divu(Addressing::Addr(A(1)), D(1))
+        );
+        test!(
+            [0x82e8, 0x0004],
+            Instruction::Divu(Addressing::AddrDisplacement(A(0), 4), D(1))
+        );
+        test!(
+            [0x82d9],
+            Instruction::Divu(Addressing::AddrPostIncrement(A(1)), D(1))
+        );
+        test!(
+            [0x82e1],
+            Instruction::Divu(Addressing::AddrPreDecrement(A(1)), D(1))
+        );
+    }
 }
