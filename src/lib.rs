@@ -1,4 +1,24 @@
 
+pub trait Fetch {
+    fn next_u8(&mut self) -> Option<u8>;
+    fn next_u16(&mut self) -> Option<u16>;
+    fn next_u32(&mut self) -> Option<u32>;
+}
+
+impl<T: Iterator<Item = u16>> Fetch for T {
+    fn next_u8(&mut self) -> Option<u8> {
+        self.next().map(|v| v as u8)
+    }
+    fn next_u16(&mut self) -> Option<u16> {
+        self.next()
+    }
+    fn next_u32(&mut self) -> Option<u32> {
+        let hi = self.next()?;
+        let lo = self.next()?;
+        Some(((hi as u32) << 16) | (lo as u32))
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Size {
     Byte,
@@ -25,16 +45,11 @@ pub enum SizedImm {
 }
 
 impl SizedImm {
-    fn new(size: Size, iter: &mut impl Iterator<Item = u16>) -> Option<SizedImm> {
+    fn new(size: Size, iter: &mut impl Fetch) -> Option<SizedImm> {
         match size {
-            Size::Byte => Some(SizedImm::Byte((iter.next()?) as u8)),
-            Size::Word => Some(SizedImm::Word(iter.next()?)),
-            Size::Long => {
-                let hi = iter.next()?;
-                let lo = iter.next()?;
-                let imm = ((hi as u32) << 16) | (lo as u32);
-                Some(SizedImm::Long(imm))
-            },
+            Size::Byte => Some(SizedImm::Byte(iter.next_u8()?)),
+            Size::Word => Some(SizedImm::Word(iter.next_u16()?)),
+            Size::Long => Some(SizedImm::Long(iter.next_u32()?)),
         }
     }
 }
@@ -75,16 +90,16 @@ pub enum Addressing {
 }
 
 impl Addressing {
-    fn decode_mx(m: u8, x: u8, size: Option<Size>, mut v: impl Iterator<Item = u16>) -> Option<Addressing> {
+    fn decode_mx(m: u8, x: u8, size: Option<Size>, v: &mut impl Fetch) -> Option<Addressing> {
         match m {
             0 => Some(Addressing::DReg(D(x))),
             1 => Some(Addressing::AReg(A(x))),
             2 => Some(Addressing::Addr(A(x))),
             3 => Some(Addressing::AddrPostIncrement(A(x))),
             4 => Some(Addressing::AddrPreDecrement(A(x))),
-            5 => Some(Addressing::AddrDisplacement(A(x), v.next()?)),
+            5 => Some(Addressing::AddrDisplacement(A(x), v.next_u16()?)),
             6 => {
-                let word = v.next()?;
+                let word = v.next_u16()?;
                 let displacement = (word & 0xff) as u8;
                 let reg = if ((word & 0x8000) >> 15) == 0 {
                     IndexReg::DReg(D(((word >> 12) & 7) as u8))
@@ -100,16 +115,11 @@ impl Addressing {
             },
             7 => {
                 match x {
-                    0 => Some(Addressing::AbsoluteShort(v.next()?)),
-                    1 => {
-                        let hi = v.next()?;
-                        let lo = v.next()?;
-                        let addr = ((hi as u32) << 16) | (lo as u32);
-                        Some(Addressing::AbsoluteWord(addr))
-                    },
-                    2 => Some(Addressing::PcDisplacement(v.next()?)),
+                    0 => Some(Addressing::AbsoluteShort(v.next_u16()?)),
+                    1 => Some(Addressing::AbsoluteWord(v.next_u32()?)),
+                    2 => Some(Addressing::PcDisplacement(v.next_u16()?)),
                     3 => {
-                        let word = v.next()?;
+                        let word = v.next_u16()?;
                         let displacement = (word & 0xff) as u8;
                         let reg = if ((word & 0x8000) >> 15) == 0 {
                             IndexReg::DReg(D(((word >> 12) & 7) as u8))
@@ -125,14 +135,9 @@ impl Addressing {
                     },
                     4 => {
                         match size? {
-                            Size::Byte => Some(Addressing::ImmediateByte(v.next()? as u8)),
-                            Size::Word => Some(Addressing::ImmediateWord(v.next()?)),
-                            Size::Long => {
-                                let hi = v.next()?;
-                                let lo = v.next()?;
-                                let addr = ((hi as u32) << 16) | (lo as u32);
-                                Some(Addressing::ImmediateLong(addr))
-                            },
+                            Size::Byte => Some(Addressing::ImmediateByte(v.next_u8()?)),
+                            Size::Word => Some(Addressing::ImmediateWord(v.next_u16()?)),
+                            Size::Long => Some(Addressing::ImmediateLong(v.next_u32()?)),
                         }
                     },
                     _ => None,
@@ -141,15 +146,15 @@ impl Addressing {
             _ => unreachable!(),
         }
     }
-    fn noimm(d: u16, v: impl Iterator<Item = u16>) -> Option<Addressing> {
+    fn noimm(d: u16, v: &mut impl Fetch) -> Option<Addressing> {
         Self::decode(d, None, v)
     }
-    fn decode(d: u16, size: Option<Size>, v: impl Iterator<Item = u16>) -> Option<Addressing> {
+    fn decode(d: u16, size: Option<Size>, v: &mut impl Fetch) -> Option<Addressing> {
         let m = ((d & 0o70) >> 3) as u8;
         let x = (d & 0o7) as u8;
         Self::decode_mx(m, x, size, v)
     }
-    fn decode_left(d: u16, size: Option<Size>, v: impl Iterator<Item = u16>) -> Option<Addressing> {
+    fn decode_left(d: u16, size: Option<Size>, v: &mut impl Fetch) -> Option<Addressing> {
         let m = ((d & 0o0700) >> 6) as u8;
         let x = ((d & 0o7000) >> 9) as u8;
         Self::decode_mx(m, x, size, v)
@@ -292,9 +297,12 @@ pub enum Instruction {
     Divs(Addressing, D),
 }
 
-pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
-    let mut iter = v.into_iter();
-    let op = iter.next()?;
+pub fn decode(iter: impl IntoIterator<Item = u16>) -> Option<Instruction> {
+    decode_inner(&mut iter.into_iter())
+}
+
+pub fn decode_inner(iter: &mut impl Fetch) -> Option<Instruction> {
+    let op = iter.next_u16()?;
     let nibbles: [u8; 4] = [
         (op & 0x000f) as u8,
         ((op & 0x00f0) >> 4) as u8,
@@ -311,8 +319,8 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
         0x0 => {
             match nibbles[2] {
                 0x0 | 0x2 | 0xa => {
-                    let size = SizedImm::new(Size::decode(op)?, &mut iter)?;
-                    if let Some(addr) = Addressing::decode(op, None, &mut iter) {
+                    let size = SizedImm::new(Size::decode(op)?, iter)?;
+                    if let Some(addr) = Addressing::decode(op, None, iter) {
                         match octs[3] {
                             0 => Some(Instruction::Ori(size, addr)),
                             1 => Some(Instruction::Andi(size, addr)),
@@ -331,19 +339,19 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                         }
                     }
                 },
-                0x4 => Some(Instruction::Subi(SizedImm::new(Size::decode(op)?, &mut iter)?, Addressing::noimm(op, &mut iter)?)),
-                0x6 => Some(Instruction::Addi(SizedImm::new(Size::decode(op)?, &mut iter)?, Addressing::noimm(op, &mut iter)?)),
-                0xc => Some(Instruction::Cmpi(SizedImm::new(Size::decode(op)?, &mut iter)?, Addressing::noimm(op, &mut iter)?)),
+                0x4 => Some(Instruction::Subi(SizedImm::new(Size::decode(op)?, iter)?, Addressing::noimm(op, iter)?)),
+                0x6 => Some(Instruction::Addi(SizedImm::new(Size::decode(op)?, iter)?, Addressing::noimm(op, iter)?)),
+                0xc => Some(Instruction::Cmpi(SizedImm::new(Size::decode(op)?, iter)?, Addressing::noimm(op, iter)?)),
                 _ if octs[1] != 1 => {
                     match octs[2] {
-                        0 => Some(Instruction::BitImm(BitOp::Tst, iter.next()? as u8, Addressing::noimm(op, &mut iter)?)),
-                        1 => Some(Instruction::BitImm(BitOp::Chg, iter.next()? as u8, Addressing::noimm(op, &mut iter)?)),
-                        2 => Some(Instruction::BitImm(BitOp::Clr, iter.next()? as u8, Addressing::noimm(op, &mut iter)?)),
-                        3 => Some(Instruction::BitImm(BitOp::Set, iter.next()? as u8, Addressing::noimm(op, &mut iter)?)),
-                        4 => Some(Instruction::Bit(BitOp::Tst, D(octs[3]), Addressing::noimm(op, &mut iter)?)),
-                        5 => Some(Instruction::Bit(BitOp::Chg, D(octs[3]), Addressing::noimm(op, &mut iter)?)),
-                        6 => Some(Instruction::Bit(BitOp::Clr, D(octs[3]), Addressing::noimm(op, &mut iter)?)),
-                        7 => Some(Instruction::Bit(BitOp::Set, D(octs[3]), Addressing::noimm(op, &mut iter)?)),
+                        0 => Some(Instruction::BitImm(BitOp::Tst, iter.next_u8()?, Addressing::noimm(op, iter)?)),
+                        1 => Some(Instruction::BitImm(BitOp::Chg, iter.next_u8()?, Addressing::noimm(op, iter)?)),
+                        2 => Some(Instruction::BitImm(BitOp::Clr, iter.next_u8()?, Addressing::noimm(op, iter)?)),
+                        3 => Some(Instruction::BitImm(BitOp::Set, iter.next_u8()?, Addressing::noimm(op, iter)?)),
+                        4 => Some(Instruction::Bit(BitOp::Tst, D(octs[3]), Addressing::noimm(op, iter)?)),
+                        5 => Some(Instruction::Bit(BitOp::Chg, D(octs[3]), Addressing::noimm(op, iter)?)),
+                        6 => Some(Instruction::Bit(BitOp::Clr, D(octs[3]), Addressing::noimm(op, iter)?)),
+                        7 => Some(Instruction::Bit(BitOp::Set, D(octs[3]), Addressing::noimm(op, iter)?)),
                         _ => unreachable!(),
                     }
                 },
@@ -358,7 +366,7 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                     } else {
                         Size::Long
                     };
-                    Some(Instruction::Movep(size, dir, D(octs[3]), A(octs[0]), iter.next()?))
+                    Some(Instruction::Movep(size, dir, D(octs[3]), A(octs[0]), iter.next_u16()?))
                 }
             }
         },
@@ -369,27 +377,27 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                 3 => Size::Word,
                 _ => unreachable!(),
             };
-            let src = Addressing::decode(op, Some(size), &mut iter)?;
+            let src = Addressing::decode(op, Some(size), iter)?;
             if octs[2] == 1 && size != Size::Byte {
                 Some(Instruction::Movea(size, src, A(octs[3])))
             } else {
-                let dst = Addressing::decode_left(op, None, &mut iter)?;
+                let dst = Addressing::decode_left(op, None, iter)?;
                 Some(Instruction::Move(size, src, dst))
             }
         },
         4 => {
             match nibbles[2] {
-                0b0000 if octs[2] == 3 => Some(Instruction::MoveFromSr(Addressing::noimm(op, &mut iter)?)),
-                0b0100 if octs[2] == 3 => Some(Instruction::MoveToCcr(Addressing::decode(op, Some(Size::Byte), &mut iter)?)),
-                0b0110 if octs[2] == 3 => Some(Instruction::MoveToSr(Addressing::decode(op, Some(Size::Word), &mut iter)?)),
-                0b0000 => Some(Instruction::Negx(Size::decode(op)?, Addressing::noimm(op, &mut iter)?)),
-                0b0010 => Some(Instruction::Clr(Size::decode(op)?, Addressing::noimm(op, &mut iter)?)),
-                0b0100 => Some(Instruction::Neg(Size::decode(op)?, Addressing::noimm(op, &mut iter)?)),
-                0b0110 => Some(Instruction::Not(Size::decode(op)?, Addressing::noimm(op, &mut iter)?)),
+                0b0000 if octs[2] == 3 => Some(Instruction::MoveFromSr(Addressing::noimm(op, iter)?)),
+                0b0100 if octs[2] == 3 => Some(Instruction::MoveToCcr(Addressing::decode(op, Some(Size::Byte), iter)?)),
+                0b0110 if octs[2] == 3 => Some(Instruction::MoveToSr(Addressing::decode(op, Some(Size::Word), iter)?)),
+                0b0000 => Some(Instruction::Negx(Size::decode(op)?, Addressing::noimm(op, iter)?)),
+                0b0010 => Some(Instruction::Clr(Size::decode(op)?, Addressing::noimm(op, iter)?)),
+                0b0100 => Some(Instruction::Neg(Size::decode(op)?, Addressing::noimm(op, iter)?)),
+                0b0110 => Some(Instruction::Not(Size::decode(op)?, Addressing::noimm(op, iter)?)),
                 0b1000 => {
                     if octs[1] == 0 {
                         match octs[2] {
-                            0 => Some(Instruction::Nbcd(Addressing::noimm(op, &mut iter)?)),
+                            0 => Some(Instruction::Nbcd(Addressing::noimm(op, iter)?)),
                             1 => Some(Instruction::Swap(D(octs[0]))),
                             2 => Some(Instruction::Ext(Size::Word, D(octs[0]))),
                             3 => Some(Instruction::Ext(Size::Long, D(octs[0]))),
@@ -397,8 +405,8 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                         }
                     } else {
                         match octs[2] {
-                            0 => Some(Instruction::Nbcd(Addressing::noimm(op, &mut iter)?)),
-                            1 => Some(Instruction::Pea(Addressing::decode(op, Some(Size::Long), &mut iter)?)),
+                            0 => Some(Instruction::Nbcd(Addressing::noimm(op, iter)?)),
+                            1 => Some(Instruction::Pea(Addressing::decode(op, Some(Size::Long), iter)?)),
                             2 | 3 => None,
                             _ => unreachable!(),
                         }
@@ -406,12 +414,12 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                 },
                 0b1010 => {
                     match Size::decode(op) {
-                        Some(size) => Some(Instruction::Tst(size, Addressing::noimm(op, &mut iter)?)),
+                        Some(size) => Some(Instruction::Tst(size, Addressing::noimm(op, iter)?)),
                         None => {
                             if octs[1] == 0b111 && octs[0] == 0b100 {
                                 Some(Instruction::Illegal)
                             } else {
-                                Some(Instruction::Tas(Addressing::noimm(op, &mut iter)?))
+                                Some(Instruction::Tas(Addressing::noimm(op, iter)?))
                             }
                         },
                     }
@@ -421,7 +429,7 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                         0b0100 => Some(Instruction::Trap(nibbles[0])),
                         0b0101 => {
                             if nibbles[0] & 0x8 == 0 {
-                                Some(Instruction::Link(A(octs[0]), iter.next()?))
+                                Some(Instruction::Link(A(octs[0]), iter.next_u16()?))
                             } else {
                                 Some(Instruction::Unlk(A(octs[0])))
                             }
@@ -438,7 +446,7 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                             match nibbles[0] {
                                 0b0000 => Some(Instruction::Reset),
                                 0b0001 => Some(Instruction::Nop),
-                                0b0010 => Some(Instruction::Stop(iter.next()?)),
+                                0b0010 => Some(Instruction::Stop(iter.next_u16()?)),
                                 0b0011 => Some(Instruction::Rte),
                                 0b0101 => Some(Instruction::Rts),
                                 0b0110 => Some(Instruction::Trapv),
@@ -448,8 +456,8 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                         },
                         _ => {
                             match octs[2] {
-                                0b010 => Some(Instruction::Jsr(Addressing::noimm(op, &mut iter)?)),
-                                0b011 => Some(Instruction::Jmp(Addressing::noimm(op, &mut iter)?)),
+                                0b010 => Some(Instruction::Jsr(Addressing::noimm(op, iter)?)),
+                                0b011 => Some(Instruction::Jmp(Addressing::noimm(op, iter)?)),
                                 _ => None,
                             }
                         },
@@ -468,11 +476,11 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                                 0b011 => Size::Long,
                                 _ => unreachable!(),
                             };
-                            let mask = iter.next()?;
-                            Some(Instruction::Movem(dir, size, Addressing::noimm(op, &mut iter)?, mask))
+                            let mask = iter.next_u16()?;
+                            Some(Instruction::Movem(dir, size, Addressing::noimm(op, iter)?, mask))
                         },
-                        0b111 => Some(Instruction::Lea(Addressing::noimm(op, &mut iter)?, A(octs[3]))),
-                        0b110 => Some(Instruction::Chk(D(octs[3]), Addressing::noimm(op, &mut iter)?)),
+                        0b111 => Some(Instruction::Lea(Addressing::noimm(op, iter)?, A(octs[3]))),
+                        0b110 => Some(Instruction::Chk(D(octs[3]), Addressing::noimm(op, iter)?)),
                         _ => None,
                     }
                 },
@@ -482,23 +490,23 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
             match Size::decode(op) {
                 Some(size) => {
                     if octs[2] & 0b100 == 0 {
-                        Some(Instruction::Addq(size, octs[3], Addressing::noimm(op, &mut iter)?))
+                        Some(Instruction::Addq(size, octs[3], Addressing::noimm(op, iter)?))
                     } else {
-                        Some(Instruction::Subq(size, octs[3], Addressing::noimm(op, &mut iter)?))
+                        Some(Instruction::Subq(size, octs[3], Addressing::noimm(op, iter)?))
                     }
                 },
                 None => {
                     if octs[1] == 0b001 {
-                        Some(Instruction::Db(Condition::decode(op), D(octs[0]), iter.next()?))
+                        Some(Instruction::Db(Condition::decode(op), D(octs[0]), iter.next_u16()?))
                     } else {
-                        Some(Instruction::S(Condition::decode(op), Addressing::noimm(op, &mut iter)?))
+                        Some(Instruction::S(Condition::decode(op), Addressing::noimm(op, iter)?))
                     }
                 },
             }
         },
         0b0110 => {
             let target = if op & 0xff == 0 {
-                iter.next()?
+                iter.next_u16()?
             } else {
                 op & 0xff
             };
@@ -530,9 +538,9 @@ pub fn decode(v: impl IntoIterator<Item = u16>) -> Option<Instruction> {
                 }
                 None => {
                     if octs[2] == 0b011 {
-                        Some(Instruction::Divu(Addressing::decode(op, Some(Size::Word), &mut iter)?, D(octs[3])))
+                        Some(Instruction::Divu(Addressing::decode(op, Some(Size::Word), iter)?, D(octs[3])))
                     } else {
-                        Some(Instruction::Divs(Addressing::decode(op, Some(Size::Word), &mut iter)?, D(octs[3])))
+                        Some(Instruction::Divs(Addressing::decode(op, Some(Size::Word), iter)?, D(octs[3])))
                     }
                 },
             }
