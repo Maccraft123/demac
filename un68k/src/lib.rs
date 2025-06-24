@@ -295,6 +295,20 @@ pub enum Instruction {
     Sbcd(Rm),
     Divu(Addressing, D),
     Divs(Addressing, D),
+    ATrap(u16),
+}
+
+pub struct Decoder<T: Iterator<Item = u16>>(T);
+
+impl<T: Iterator<Item = u16>> Iterator for Decoder<T> {
+    type Item = Instruction;
+    fn next(&mut self) -> Option<Instruction> {
+        decode(&mut self.0)
+    }
+}
+
+pub fn decode_iter<T: IntoIterator<Item = u16>>(iter: T) -> Decoder<<T as IntoIterator>::IntoIter> {
+    Decoder(iter.into_iter())
 }
 
 pub fn decode(iter: impl IntoIterator<Item = u16>) -> Option<Instruction> {
@@ -316,6 +330,7 @@ pub fn decode_inner(iter: &mut impl Fetch) -> Option<Instruction> {
         ((op & 0o7000) >> 9) as u8,
     ];
     match nibbles[3] {
+        0xa => Some(Instruction::ATrap(op)),
         0x0 => {
             match nibbles[2] {
                 0x0 | 0x2 | 0xa => {
