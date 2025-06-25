@@ -1,4 +1,5 @@
 use std::str::Utf8Error;
+use std::time::{UNIX_EPOCH, SystemTime};
 use std::fmt;
 
 use binrw::{BinRead, BinWrite};
@@ -16,7 +17,10 @@ pub struct SizedString<const SIZE: usize> {
     data: [u8; SIZE],
 }
 
-impl<const CAP: usize> SizedString<CAP> {
+impl<const SIZE: usize> SizedString<SIZE> {
+    pub fn new(data: [u8; SIZE]) -> Self {
+        Self { data }
+    }
     fn try_as_str(&self) -> Result<&str, Utf8Error> {
         str::from_utf8(&self.data[..])
     }
@@ -60,7 +64,15 @@ pub struct DynamicPascalString {
 }
 
 impl DynamicPascalString {
-    fn try_as_str(&self) -> Result<&str, Utf8Error> {
+    pub fn new(t: impl Into<String>) -> Self {
+        let string: String = t.into();
+        let data = string.into_bytes();
+        Self {
+            len: data.len() as u8,
+            data,
+        }
+    }
+    pub fn try_as_str(&self) -> Result<&str, Utf8Error> {
         str::from_utf8(&self.data[..(self.len as usize)])
     }
 }
@@ -81,8 +93,23 @@ impl fmt::Debug for DynamicPascalString {
 #[repr(transparent)]
 pub struct DateTime(u32);
 
+
 use time::UtcOffset;
 impl DateTime {
+    const OFFSET_FROM_UNIX_EPOCH: u32 = 2082844800;
+    pub fn to_system_time(self) -> SystemTime {
+        UNIX_EPOCH
+            .checked_add(std::time::Duration::from_secs((self.0 - Self::OFFSET_FROM_UNIX_EPOCH) as u64))
+            .unwrap()
+    }
+    pub fn now() -> Self {
+        DateTime(SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            as u32
+            + Self::OFFSET_FROM_UNIX_EPOCH)
+    }
     fn epoch_start() -> OffsetDateTime {
         time::macros::datetime!(1904-01-01 00:00)
             .assume_offset(

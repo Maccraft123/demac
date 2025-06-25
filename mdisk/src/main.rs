@@ -14,6 +14,8 @@ struct Args {
     #[arg(short, long, default_value = "autodetect")]
     format: Format,
     input: PathBuf,
+    #[arg(short, long)]
+    mount: Option<PathBuf>,
 }
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
@@ -92,7 +94,11 @@ fn main() -> Result<()> {
         },
         Format::Mfs => {
             let vol = Mfs::new(&mut file)?;
-            println!("{:#x?}", vol);
+            //println!("{:#x?}", vol);
+            if let Some(point) = args.mount {
+                let fuse = macfmt::mfs::fuse::MfsFuse::new(vol);
+                fuse.mount(&point)?;
+            }
         },
         Format::Autodetect => unreachable!(),
         _ => todo!("{:?} disk format", fmt),
