@@ -12,3 +12,7 @@ static_assertions = "1.1.0"
 time = { version = "0.3.41", default-features = false, features = ["local-offset", "macros"] }
 un68k = { version = "0.1.0", path = "../un68k" }
 zerocopy = { version = "0.8.26", features = ["derive"] }
+
+[dev-dependencies]
+flate2 = "1.1.2"
+miniz_oxide = "0.8.9"
