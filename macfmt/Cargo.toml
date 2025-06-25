@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bilge = "0.2.0"
 binrw = "0.15.0"
+bitfield-struct = "0.11.0"
+bitflags = "2.9.1"
 
 deku = { version = "0.19.1", default-features = false, features = ["alloc", "std"] }
 derivative = "2.2.0"

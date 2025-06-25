@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.98"
+bilge = "0.2.0"
 binrw = "0.15.0"
 clap = { version = "4.5.40", features = ["derive"] }
 comfy-table = "7.1.4"
