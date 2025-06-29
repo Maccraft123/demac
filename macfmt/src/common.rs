@@ -12,7 +12,7 @@ use deku::{
     no_std_io::{Read, Seek},
 };
 
-#[derive(Clone, BinRead, BinWrite)]
+#[derive(Clone, Eq, PartialEq, BinRead, BinWrite)]
 pub struct SizedString<const SIZE: usize> {
     data: [u8; SIZE],
 }
@@ -21,12 +21,21 @@ impl<const SIZE: usize> SizedString<SIZE> {
     pub fn new(data: [u8; SIZE]) -> Self {
         Self { data }
     }
-    fn try_as_str(&self) -> Result<&str, Utf8Error> {
+    pub fn as_inner(&self) -> &[u8; SIZE] {
+        &self.data
+    }
+    pub fn try_as_str(&self) -> Result<&str, Utf8Error> {
         str::from_utf8(&self.data[..])
     }
 }
 
-impl<const CAP: usize> fmt::Debug for SizedString<CAP> {
+impl<const SIZE: usize> From<[u8; SIZE]> for SizedString<SIZE> {
+    fn from(data: [u8; SIZE]) -> SizedString<SIZE> {
+        Self { data }
+    }
+}
+
+impl<const SIZE: usize> fmt::Debug for SizedString<SIZE> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self.try_as_str() {
             Ok(s) => write!(f, "SizedString(\"{s}\")"),
@@ -35,7 +44,7 @@ impl<const CAP: usize> fmt::Debug for SizedString<CAP> {
     }
 }
 
-#[derive(Clone, BinRead, BinWrite)]
+#[derive(Clone, BinRead, BinWrite, Eq, PartialEq)]
 pub struct PascalString<const CAP: usize> {
     len: u8,
     data: [u8; CAP],
@@ -56,7 +65,8 @@ impl<const CAP: usize> fmt::Debug for PascalString<CAP> {
     }
 }
 
-#[derive(Clone, BinRead, BinWrite)]
+#[derive(Clone, BinRead, BinWrite, Eq, PartialEq)]
+#[brw(big)]
 pub struct DynamicPascalString {
     len: u8,
     #[br(count = len)]
@@ -71,6 +81,9 @@ impl DynamicPascalString {
             len: data.len() as u8,
             data,
         }
+    }
+    pub fn len(&self) -> usize {
+        self.data.len()
     }
     pub fn try_as_str(&self) -> Result<&str, Utf8Error> {
         str::from_utf8(&self.data[..(self.len as usize)])
@@ -87,7 +100,7 @@ impl fmt::Debug for DynamicPascalString {
     }
 }
 
-#[derive(Clone, Copy, DekuRead, BinRead, BinWrite)]
+#[derive(Clone, Copy, Eq, PartialEq, DekuRead, BinRead, BinWrite)]
 #[brw(big)]
 #[deku(endian = "big", ctx = "_: Endian")]
 #[repr(transparent)]

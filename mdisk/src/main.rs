@@ -94,7 +94,7 @@ fn main() -> Result<()> {
         },
         Format::Mfs => {
             let vol = Mfs::new(&mut file)?;
-            //println!("{:#x?}", vol);
+            println!("{:#x?}", vol);
             if let Some(point) = args.mount {
                 let fuse = macfmt::mfs::fuse::MfsFuse::new(vol);
                 fuse.mount(&point)?;
