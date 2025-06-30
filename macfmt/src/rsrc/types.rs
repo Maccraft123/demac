@@ -1,10 +1,12 @@
 use binrw::{BinRead, BinWrite, BinResult};
 use binrw::io::{Read, Seek, SeekFrom};
-use crate::common::{DateTime, DynamicPascalString, SizedString};
+use crate::common::{DateTime, DynamicPascalString, SizedString, Rect, Point};
+use crate::i18n::RegionCode;
 use derivative::Derivative;
 use super::ResourceType;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Derivative, Eq, PartialEq)]
+#[derivative(Debug)]
 pub enum Type {
     Menu(Menu),
     String(DynamicPascalString),
@@ -19,7 +21,10 @@ pub enum Type {
     FileReference(FileReference),
     ItemList(ItemList),
     Version(Version),
-    Other(Vec<u8>),
+    Other(
+        #[derivative(Debug = "ignore")]
+        Vec<u8>
+    ),
 }
 
 impl Type {
@@ -50,11 +55,22 @@ impl Type {
 pub struct Version {
     minor: u8,
     major: u8,
-    development_stage: u8,
+    development_stage: DevelopmentStage,
     prerelease_revision: u8,
-    region: [u8; 2],
+    #[brw(pad_before = 1)]
+    region: RegionCode,
     version_number: DynamicPascalString,
     version_message: DynamicPascalString,
+}
+
+#[derive(Clone, Derivative, BinRead, BinWrite, Eq, PartialEq)]
+#[derivative(Debug)]
+#[brw(big)]
+pub enum DevelopmentStage {
+    #[brw(magic = 0x20_u8)] PreAlpha,
+    #[brw(magic = 0x40_u8)] Alpha,
+    #[brw(magic = 0x60_u8)] Beta,
+    #[brw(magic = 0x80_u8)] Released,
 }
 
 #[derive(Clone, Derivative, BinRead, BinWrite, Eq, PartialEq)]
@@ -81,7 +97,7 @@ pub struct ItemList {
 #[brw(big)]
 pub struct Item {
     #[brw(pad_before = 4)]
-    rect: (u32, u32),
+    rect: Rect,
     #[br(temp)]
     #[brw(dbg)]
     ty: u8,
@@ -170,7 +186,7 @@ pub struct IconList<const SIZE: usize> {
 #[derivative(Debug)]
 #[brw(big)]
 pub struct Alert {
-    rect: (u32, u32),
+    rect: Rect,
     item_list_res_id: u16,
     alert_info: u16,
     // position???
@@ -180,7 +196,7 @@ pub struct Alert {
 #[derivative(Debug)]
 #[brw(big)]
 pub struct Window {
-    rectangle: (u32, u32),
+    rect: Rect,
     id: u16,
     visibility: u16,
     close_box: u16,
@@ -258,7 +274,7 @@ pub struct Size {
 #[brw(big)]
 pub struct MfsFolder {
     ty: u16,
-    icon_pos: (u16, u16),
+    icon_pos: Point,
     unk1: u32,
     unk2: u16,
     parent: u16,
