@@ -100,6 +100,40 @@ impl fmt::Debug for DynamicPascalString {
     }
 }
 
+#[derive(Clone, BinRead, BinWrite, Eq, PartialEq)]
+#[brw(big)]
+#[br(import { count: usize })]
+pub struct UnsizedPascalString {
+    #[br(count = count)]
+    data: Vec<u8>,
+}
+
+impl UnsizedPascalString {
+    pub fn new(t: impl Into<String>) -> Self {
+        let string: String = t.into();
+        let data = string.into_bytes();
+        Self {
+            data,
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+    pub fn try_as_str(&self) -> Result<&str, Utf8Error> {
+        str::from_utf8(&self.data[..])
+    }
+}
+
+
+impl fmt::Debug for UnsizedPascalString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        match self.try_as_str() {
+            Ok(s) => write!(f, "UnsizedPascalString(\"{s}\")"),
+            Err(_) => write!(f, "UnsizedPascalString({:x?})", &self.data),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq, DekuRead, BinRead, BinWrite)]
 #[brw(big)]
 #[deku(endian = "big", ctx = "_: Endian")]
@@ -193,4 +227,39 @@ pub struct BootBlockExtra {
     #[brw(pad_before = 2)]
     system_heap_extra: u32,
     system_heap_fract: u32,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, BinRead, BinWrite)]
+#[brw(big)]
+pub struct Point {
+    y: i16,
+    x: i16,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, BinRead, BinWrite)]
+#[brw(big)]
+pub struct Rect {
+    top_left: Point,
+    bottom_right: Point,
+}
+
+#[derive(Debug, Clone, BinRead, BinWrite)]
+#[brw(big)]
+pub struct FinderInfo {
+    file_type: SizedString<4>,
+    file_creator: SizedString<4>,
+    flags: u16,
+    location: Point,
+    parent_dir: u16,
+}
+
+#[derive(Debug, Clone, BinRead, BinWrite)]
+#[brw(big)]
+pub struct ExtraFinderInfo {
+    #[brw(pad_after = 6)]
+    icon_id: u16,
+    script: u8,
+    flags: u8,
+    comment_id: u16,
+    home_dir_id: u32,
 }
