@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = [ "doubler", "macfmt", "mdisk", "resourcerer","un68k"]
+members = [ "doubler", "macfmt", "mdisk", "ostrich", "resourcerer", "rsrc-editor", "un68k"]

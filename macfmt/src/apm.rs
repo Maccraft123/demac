@@ -1,7 +1,7 @@
 use std::fmt;
 
-use binrw::{binread, BinRead, BinWrite, BinResult, NullString};
 use binrw::io::{Read, Seek, SeekFrom};
+use binrw::{BinRead, BinResult, BinWrite, NullString, binread};
 use derivative::Derivative;
 
 use crate::hfs::HfsVolume;
@@ -17,10 +17,7 @@ impl<'a, R: Read + Seek> ApmDrive<'a, R> {
     }
     pub fn new(reader: &'a mut R) -> BinResult<Self> {
         let table = ApmTable::read(reader)?;
-        Ok(Self {
-            table,
-            reader
-        })
+        Ok(Self { table, reader })
     }
     pub fn partitions(&self) -> &[Partition] {
         &self.table.partitions
@@ -58,7 +55,8 @@ pub struct ApmTable {
 }
 
 fn apm_pad_size(partitions: &[Partition]) -> u32 {
-    partitions.iter()
+    partitions
+        .iter()
         .find(|entry| entry.kind == PartitionType::ApplePartitionMap)
         .map(|entry| entry.size - entry.partition_count)
         .unwrap_or(0)
@@ -176,23 +174,21 @@ fn partition_type_parser() -> BinResult<PartitionType> {
     let mut buf = [0u8; 32];
     reader.read_exact(&mut buf)?;
     match str::from_utf8(&buf) {
-        Ok(s) => {
-            match s.trim_end_matches('\0') {
-                "Apple_partition_map" => Ok(PartitionType::ApplePartitionMap),
-                "Apple_Driver" => Ok(PartitionType::AppleDriver),
-                "Apple_Driver43" => Ok(PartitionType::AppleDriver43),
-                "Apple_MFS" => Ok(PartitionType::AppleMfs),
-                "Apple_HFS" => Ok(PartitionType::AppleHfs),
-                "Apple_Unix_SVR2" => Ok(PartitionType::AppleUnixSvr2),
-                "Apple_PRODOS" => Ok(PartitionType::AppleProDos),
-                "Apple_Free" => Ok(PartitionType::AppleFree),
-                "Apple_Scratch" => Ok(PartitionType::AppleScratch),
-                "Apple_Bootstrap" => Ok(PartitionType::AppleBootstrap),
-                "Linux" => Ok(PartitionType::Linux),
-                "Linux_RAID" => Ok(PartitionType::LinuxRaid),
-                "Linux_swap" => Ok(PartitionType::LinuxSwap),
-                _ => Ok(PartitionType::Other(s.to_string()))
-            }
+        Ok(s) => match s.trim_end_matches('\0') {
+            "Apple_partition_map" => Ok(PartitionType::ApplePartitionMap),
+            "Apple_Driver" => Ok(PartitionType::AppleDriver),
+            "Apple_Driver43" => Ok(PartitionType::AppleDriver43),
+            "Apple_MFS" => Ok(PartitionType::AppleMfs),
+            "Apple_HFS" => Ok(PartitionType::AppleHfs),
+            "Apple_Unix_SVR2" => Ok(PartitionType::AppleUnixSvr2),
+            "Apple_PRODOS" => Ok(PartitionType::AppleProDos),
+            "Apple_Free" => Ok(PartitionType::AppleFree),
+            "Apple_Scratch" => Ok(PartitionType::AppleScratch),
+            "Apple_Bootstrap" => Ok(PartitionType::AppleBootstrap),
+            "Linux" => Ok(PartitionType::Linux),
+            "Linux_RAID" => Ok(PartitionType::LinuxRaid),
+            "Linux_swap" => Ok(PartitionType::LinuxSwap),
+            _ => Ok(PartitionType::Other(s.to_string())),
         },
         Err(e) => Ok(PartitionType::NonUtf8(buf)),
     }
@@ -259,19 +255,17 @@ fn processor_type_parser() -> BinResult<ProcessorType> {
     let mut buf = [0u8; 16];
     reader.read_exact(&mut buf)?;
     match str::from_utf8(&buf) {
-        Ok(s) => {
-            match s.trim_end_matches('\0') {
-                "68000" => Ok(ProcessorType::M68000),
-                "68008" => Ok(ProcessorType::M68008),
-                "68010" => Ok(ProcessorType::M68010),
-                "68012" => Ok(ProcessorType::M68012),
-                "68020" => Ok(ProcessorType::M68020),
-                "68030" => Ok(ProcessorType::M68030),
-                "68040" => Ok(ProcessorType::M68040),
-                "powerpc" => Ok(ProcessorType::PowerPc),
-                "" => Ok(ProcessorType::Unspecified),
-                _ => Ok(ProcessorType::Other(s.to_string()))
-            }
+        Ok(s) => match s.trim_end_matches('\0') {
+            "68000" => Ok(ProcessorType::M68000),
+            "68008" => Ok(ProcessorType::M68008),
+            "68010" => Ok(ProcessorType::M68010),
+            "68012" => Ok(ProcessorType::M68012),
+            "68020" => Ok(ProcessorType::M68020),
+            "68030" => Ok(ProcessorType::M68030),
+            "68040" => Ok(ProcessorType::M68040),
+            "powerpc" => Ok(ProcessorType::PowerPc),
+            "" => Ok(ProcessorType::Unspecified),
+            _ => Ok(ProcessorType::Other(s.to_string())),
         },
         Err(e) => Ok(ProcessorType::NonUtf8(buf)),
     }
@@ -285,9 +279,10 @@ mod tests {
 
     use flate2::read::GzDecoder;
 
-    static HD_100MB: &'static [u8] = include_bytes!(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/100mb-hfs.hda.gz")
-    );
+    static HD_100MB: &'static [u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/testdata/100mb-hfs.hda.gz"
+    ));
     #[test]
     fn decode() {
         let mut decoder = GzDecoder::new(HD_100MB);
@@ -301,7 +296,8 @@ mod tests {
             (PartitionType::AppleHfs, 96, 184224),
         ];
 
-        let got_partitions: Vec<(PartitionType, u32, u32)> = disk.partitions()
+        let got_partitions: Vec<(PartitionType, u32, u32)> = disk
+            .partitions()
             .iter()
             .map(|p| (p.kind().clone(), p.start(), p.size()))
             .collect();

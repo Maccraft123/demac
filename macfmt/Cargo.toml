@@ -8,12 +8,16 @@ bilge = "0.2.0"
 binrw = "0.15.0"
 bitfield-struct = "0.11.0"
 bitflags = "2.9.1"
+bitvec = "1.0.1"
+crc = "3.3.0"
 
 deku = { version = "0.19.1", default-features = false, features = ["alloc", "std"] }
 derivative = "2.2.0"
 fuser = "0.15.1"
+image = "0.25.6"
 libc = "0.2.174"
 static_assertions = "1.1.0"
+strum = { version = "0.27.1", features = ["derive"] }
 thiserror = "2.0.12"
 time = { version = "0.3.41", default-features = false, features = ["local-offset", "macros"] }
 un68k = { version = "0.1.0", path = "../un68k" }

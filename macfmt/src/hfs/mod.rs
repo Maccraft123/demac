@@ -1,7 +1,7 @@
 use std::{fmt, mem};
 
-use binrw::{BinRead, BinWrite};
 use crate::common::{DateTime, PascalString};
+use binrw::{BinRead, BinWrite};
 use derivative::Derivative;
 use static_assertions::assert_eq_size;
 
@@ -101,7 +101,7 @@ pub struct BootBlockHeader {
     system_heap_size: u32,
     #[br(if(version & 0x2000 != 0))]
     extra_data: Option<BootBlockExtra>,
-    #[derivative(Debug(format_with="BootBlockHeader::code_vec_fmt"))]
+    #[derivative(Debug(format_with = "BootBlockHeader::code_vec_fmt"))]
     #[br(count = 400)]
     code: Vec<u16>,
 }

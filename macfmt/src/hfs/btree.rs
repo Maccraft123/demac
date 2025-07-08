@@ -1,8 +1,8 @@
 use std::{fmt, mem};
 
-use binrw::{BinRead, BinWrite};
-use binrw::io::SeekFrom;
 use crate::common::{DateTime, PascalString};
+use binrw::io::SeekFrom;
+use binrw::{BinRead, BinWrite};
 use derivative::Derivative;
 use static_assertions::assert_eq_size;
 
@@ -86,8 +86,6 @@ pub struct MapRecord {
     bitmap: [u8; 256],
 }
 
-
 #[derive(Derivative, Clone, BinRead, BinWrite)]
 #[derivative(Debug)]
-pub struct IndexRecord {
-}
+pub struct IndexRecord {}

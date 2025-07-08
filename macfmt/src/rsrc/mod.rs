@@ -1,8 +1,9 @@
+use crate::common::{DynamicPascalString, SizedString};
 use binrw::{
+    BinRead, BinResult, BinWrite,
     io::{Read, Seek, SeekFrom},
-    BinRead, BinWrite, BinResult,
 };
-use crate::common::{SizedString, DynamicPascalString};
+use bitflags::bitflags;
 use derivative::Derivative;
 
 pub mod types;
@@ -11,6 +12,12 @@ pub mod types;
 pub struct Resource {
     id: i16,
     ty: ResourceType,
+    pub system_heap: bool,
+    pub purgeable: bool,
+    pub locked: bool,
+    pub protected: bool,
+    pub preload: bool,
+    pub compressed: bool,
     data: types::Type,
     name: Option<DynamicPascalString>,
 }
@@ -18,6 +25,9 @@ pub struct Resource {
 impl Resource {
     pub fn id(&self) -> i16 {
         self.id
+    }
+    pub fn data_mut(&mut self) -> &mut types::Type {
+        &mut self.data
     }
     pub fn data(&self) -> &types::Type {
         &self.data
@@ -34,10 +44,20 @@ impl Resource {
         let mut ref_iter = raw.refs.iter();
         for t in raw.types.iter() {
             for r in raw.refs_of(t) {
-                let data = types::Type::new(&t.ty, raw.data_of(r).to_owned())?;
+                if r.attrs.contains(Attributes::COMPRESSED) {
+                    println!("compressed, skipping...");
+                }
+
+                let data = types::Type::new(&t.ty, r.res_id, raw.data_of(r).to_owned())?;
                 ret.push(Resource {
                     id: r.res_id,
                     ty: t.ty.clone(),
+                    system_heap: r.attrs.contains(Attributes::SYSTEM_HEAP),
+                    purgeable: r.attrs.contains(Attributes::PURGEABLE),
+                    locked: r.attrs.contains(Attributes::LOCKED),
+                    protected: r.attrs.contains(Attributes::PROTECTED),
+                    preload: r.attrs.contains(Attributes::PRELOAD),
+                    compressed: r.attrs.contains(Attributes::COMPRESSED),
                     data,
                     name: raw.name_of(r).cloned(),
                 });
@@ -73,16 +93,19 @@ pub struct RawResource {
 
 impl RawResource {
     fn refs_of(&self, ty: &Type) -> &[Reference] {
-        let off = (ty.ref_list_offset as usize - self.types.len() * 8)/12;
-        let count = ty.ref_count_minus_one+1;
+        let off = (ty.ref_list_offset as usize - self.types.len() * 8) / 12;
+        let count = ty.ref_count_minus_one + 1;
         &self.refs[off..][..count as usize]
     }
     fn data_of(&self, r: &Reference) -> &[u8] {
         let off = r.data_offset as usize;
         let count = u32::from_be_bytes([
-            self.data[off], self.data[off+1], self.data[off+2], self.data[off+3]
+            self.data[off],
+            self.data[off + 1],
+            self.data[off + 2],
+            self.data[off + 3],
         ]) as usize;
-        &self.data[off+4..][..count]
+        &self.data[off + 4..][..count]
     }
     fn name_of(&self, r: &Reference) -> Option<&DynamicPascalString> {
         let mut off = r.name_offset? as usize;
@@ -133,12 +156,28 @@ pub struct Reference {
     #[br(map = |v: u16| (v != 0xffff).then_some(v))]
     #[bw(map = |v: &Option<u16>| v.unwrap_or(0xffff) )]
     name_offset: Option<u16>,
-    attrs: u8,
+    #[br(map = |v: u8| Attributes::from_bits_retain(v))]
+    #[bw(map = |v: &Attributes| v.bits())]
+    attrs: Attributes,
     #[br(parse_with = binrw::helpers::read_u24)]
     #[bw(write_with = binrw::helpers::write_u24)]
     data_offset: u32,
     #[derivative(Debug = "ignore")]
     _reserved_handle: u32,
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct Attributes: u8 {
+        const COMPRESSED = 0x1;
+        const WRITE_TO_RESOURCE_FILE = 0x2;
+        const PRELOAD = 0x4;
+        const PROTECTED = 0x8;
+        const LOCKED = 0x10;
+        const PURGEABLE = 0x20;
+        const SYSTEM_HEAP = 0x40;
+        const SYSTEM_REFERENCE = 0x80;
+    }
 }
 
 macro_rules! sized_string_enum {
@@ -180,6 +219,7 @@ sized_string_enum!(
     (b"DITL" => ItemList),
     (b"DLOG" => DialogBoxTemplate),
     (b"FONT" => BitmapFont),
+    (b"ICON" => Icon32),
     (b"icon" => Icon),
     (b"ICN#" => FinderIcon),
     (b"FREF" => FileReference),
@@ -205,7 +245,6 @@ sized_string_enum!(
     (b"FOBJ" => MfsFolderInfo),
     (b"FRSV" => SystemFontIds),
     (b"KMAP" => HwKeyboardMap),
-    (b"KSWP" => ScriptManagerKeyCombinations),
     (b"MBDF" => DefaultMenuDefinition),
     (b"MMAP" => MouseTrackingCode),
     (b"NBPC" => AppleTalkBundle),
@@ -246,4 +285,39 @@ sized_string_enum!(
     (b"INTL" => InternationalObsolete),
     (b"PREC" => PrintRecord),
     (b"ics#" => SmallIconList),
+    (b"icl4" => LargeColorIcon4),
+    (b"ics4" => SmallColorIcon4),
+    (b"icl8" => LargeColorIcon8),
+    (b"ics8" => SmallColorIcon8),
+    (b"FOND" => FontFamilyRecord),
+    (b"NFNT" => Rom128kFont),
+    (b"PRER" => ChooserNonSerialPrinter),
+    (b"PRES" => ChooserSerialPrinter),
+    (b"RDEV" => ChooserOtherDevice),
+    (b"bmap" => ControlPanelBitmap),
+    (b"ctab" => ControlPanelThing),
+    (b"insc" => InstallerScript),
+    (b"LDEF" => ListDefinitionProcedure),
+    (b"ADBS" => AdbServiceRoutine),
+    (b"KCAP" => KeyboardPhysicalLayout),
+    (b"KCHR" => KeyboardMappingSoftware),
+    (b"KSWP" => KeyboardScriptTable),
+    (b"actb" => AlertColorTable),
+    (b"atpl" => AppleTalkInternal),
+    (b"boot" => BootBlocks),
+    (b"cctb" => ControlColorTable),
+    (b"clst" => CachedIconLists),
+    (b"clut" => ColorLut),
+    (b"dctb" => DialogColorTable),
+    (b"fctb" => FontColorTable),
+    (b"gama" => ColorCorrectionTable),
+    (b"lmem" => LowMemoryGlobals),
+    (b"mcky" => MouseTracking),
+    (b"mitq" => MakeITableMemoryRequirements),
+    (b"mppc" => AppleTalkConfig),
+    (b"nrct" => RectanglePositions),
+    (b"scrn" => Screen),
+    (b"CNTL" => Control),
+    (b"acur" => AnimatedCursor),
+    (b"TMPL" => Template),
 );

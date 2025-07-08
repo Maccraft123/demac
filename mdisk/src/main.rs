@@ -84,7 +84,7 @@ fn main() -> Result<()> {
         },
         _ => args.format,
     };
-
+/*
     match fmt {
         Format::Apm => {
             let disk = ApmDrive::new(&mut file)?;
@@ -103,6 +103,6 @@ fn main() -> Result<()> {
         Format::Autodetect => unreachable!(),
         _ => todo!("{:?} disk format", fmt),
     }
-
+*/
     Ok(())
 }

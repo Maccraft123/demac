@@ -1,36 +1,46 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use binrw::BinRead;
 use std::io::{Read, Seek};
-use std::fs::File;
+use std::fs::{self, File};
 use anyhow::{bail, Result};
-use macfmt::single::{AppleDoubleHeader, AppleSingle};
+use macfmt::single::{AppleFile, EntryData};
 
 #[derive(Debug, Parser)]
-pub struct Args {
+struct Args {
     file: PathBuf,
+    #[command(subcommand)]
+    cmd: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    DumpResources {
+        destination: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     let mut file = File::open(&args.file)?;
-    let mut magic = [0, 0, 0, 0];
-    file.read_exact(&mut magic)?;
-    file.rewind()?;
-    match magic {
-        [0x00, 0x05, 0x16, 0x07] => {
-            let data = AppleDoubleHeader::read(&mut file)?;
-            for item in data.entries() {
-                println!("{:#x?}", item);
+    let data = AppleFile::read(&mut file)?;
+
+    match args.cmd {
+        Command::DumpResources { destination } => {
+            let res = data.entries()
+                .find_map(|e| {
+                    if let EntryData::ResourceFork(vec) = e {
+                        Some(vec)
+                    } else {
+                        None
+                    }
+                });
+            if let Some(res) = res {
+                fs::write(&destination, &res)?;
+            } else {
+                bail!("Input file has no resource fork");
             }
         },
-        [0x00, 0x05, 0x16, 0x00] => {
-            let data = AppleSingle::read(&mut file)?;
-            for item in data.entries() {
-                println!("{:#x?}", item);
-            }
-        },
-        _ => bail!("Unknown magic bytes {:x?}", magic),
     }
 
     Ok(())

@@ -1,16 +1,18 @@
-use std::str::Utf8Error;
-use std::time::{UNIX_EPOCH, SystemTime};
 use std::fmt;
+use std::str::Utf8Error;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use binrw::{BinRead, BinWrite};
-use time::{OffsetDateTime, PrimitiveDateTime};
-use derivative::Derivative;
+use crate::i18n::macroman_decode;
+use binrw::{BinRead, BinResult, BinWrite};
+use bitfield_struct::bitfield;
 use deku::{
-    DekuRead,
-    reader::Reader, DekuReader, DekuError,
+    DekuError, DekuRead, DekuReader,
     ctx::Endian,
     no_std_io::{Read, Seek},
+    reader::Reader,
 };
+use derivative::Derivative;
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 #[derive(Clone, Eq, PartialEq, BinRead, BinWrite)]
 pub struct SizedString<const SIZE: usize> {
@@ -69,14 +71,14 @@ impl<const CAP: usize> fmt::Debug for PascalString<CAP> {
 #[brw(big)]
 pub struct DynamicPascalString {
     len: u8,
-    #[br(count = len)]
-    data: Vec<u8>,
+    #[br(count = len, map = |buf: Vec<u8>| buf.into_iter().map(|b| macroman_decode(b)).collect())]
+    #[bw(map = |s: &String| s.as_bytes())]
+    data: String,
 }
 
 impl DynamicPascalString {
     pub fn new(t: impl Into<String>) -> Self {
-        let string: String = t.into();
-        let data = string.into_bytes();
+        let data: String = t.into();
         Self {
             len: data.len() as u8,
             data,
@@ -85,11 +87,16 @@ impl DynamicPascalString {
     pub fn len(&self) -> usize {
         self.data.len()
     }
-    pub fn try_as_str(&self) -> Result<&str, Utf8Error> {
-        str::from_utf8(&self.data[..(self.len as usize)])
+    pub fn as_str(&self) -> &str {
+        self.data.as_str()
+    }
+    pub fn try_as_str(&self) -> Result<&str, std::convert::Infallible> {
+        Ok(self.data.as_str())
+    }
+    pub fn as_mut(&mut self) -> &mut String {
+        &mut self.data
     }
 }
-
 
 impl fmt::Debug for DynamicPascalString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
@@ -112,9 +119,7 @@ impl UnsizedPascalString {
     pub fn new(t: impl Into<String>) -> Self {
         let string: String = t.into();
         let data = string.into_bytes();
-        Self {
-            data,
-        }
+        Self { data }
     }
     pub fn len(&self) -> usize {
         self.data.len()
@@ -123,7 +128,6 @@ impl UnsizedPascalString {
         str::from_utf8(&self.data[..])
     }
 }
-
 
 impl fmt::Debug for UnsizedPascalString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
@@ -134,34 +138,82 @@ impl fmt::Debug for UnsizedPascalString {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, BinRead, BinWrite)]
+#[brw(big)]
+#[repr(transparent)]
+pub struct DateTime2k(u32);
+
+use time::UtcOffset;
+impl DateTime2k {
+    const OFFSET_FROM_UNIX_EPOCH: u32 = 946684800;
+    pub fn to_system_time(self) -> SystemTime {
+        UNIX_EPOCH
+            .checked_add(std::time::Duration::from_secs((946684800 + self.0) as u64))
+            .unwrap()
+    }
+    pub fn now() -> Self {
+        DateTime2k(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as u32
+                - Self::OFFSET_FROM_UNIX_EPOCH,
+        )
+    }
+    fn epoch_start() -> OffsetDateTime {
+        time::macros::datetime!(2000-01-01 00:00).assume_offset(UtcOffset::UTC)
+    }
+    fn to_unix_timestamp(self) -> i64 {
+        let tmp: OffsetDateTime = self.into();
+        tmp.unix_timestamp()
+    }
+}
+
+impl From<&DateTime2k> for OffsetDateTime {
+    fn from(t: &DateTime2k) -> OffsetDateTime {
+        DateTime2k::epoch_start() + std::time::Duration::from_secs(t.0 as u64)
+    }
+}
+
+impl From<DateTime2k> for OffsetDateTime {
+    fn from(t: DateTime2k) -> OffsetDateTime {
+        DateTime2k::epoch_start() + std::time::Duration::from_secs(t.0 as u64)
+    }
+}
+
+impl fmt::Debug for DateTime2k {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        let tmp: OffsetDateTime = self.into();
+        write!(f, "DateTime2k(\"{:?}\")", tmp)
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq, DekuRead, BinRead, BinWrite)]
 #[brw(big)]
 #[deku(endian = "big", ctx = "_: Endian")]
 #[repr(transparent)]
 pub struct DateTime(u32);
 
-
-use time::UtcOffset;
 impl DateTime {
     const OFFSET_FROM_UNIX_EPOCH: u32 = 2082844800;
     pub fn to_system_time(self) -> SystemTime {
         UNIX_EPOCH
-            .checked_add(std::time::Duration::from_secs((self.0 - Self::OFFSET_FROM_UNIX_EPOCH) as u64))
+            .checked_add(std::time::Duration::from_secs(
+                (self.0 - Self::OFFSET_FROM_UNIX_EPOCH) as u64,
+            ))
             .unwrap()
     }
     pub fn now() -> Self {
-        DateTime(SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            as u32
-            + Self::OFFSET_FROM_UNIX_EPOCH)
+        DateTime(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as u32
+                + Self::OFFSET_FROM_UNIX_EPOCH,
+        )
     }
     fn epoch_start() -> OffsetDateTime {
-        time::macros::datetime!(1904-01-01 00:00)
-            .assume_offset(
-                UtcOffset::UTC
-            )
+        time::macros::datetime!(1904-01-01 00:00).assume_offset(UtcOffset::UTC)
     }
     fn to_unix_timestamp(self) -> i64 {
         let tmp: OffsetDateTime = self.into();
@@ -188,7 +240,6 @@ impl fmt::Debug for DateTime {
     }
 }
 
-
 #[derive(Derivative, Clone, BinRead, BinWrite)]
 #[derivative(Debug)]
 #[brw(big, magic = b"LK")]
@@ -210,7 +261,7 @@ pub struct BootBlocks {
     system_heap_size: u32,
     #[br(if(version & 0x2000 != 0))]
     extra_data: Option<BootBlockExtra>,
-    #[derivative(Debug(format_with="BootBlocks::code_vec_fmt"))]
+    #[derivative(Debug(format_with = "BootBlocks::code_vec_fmt"))]
     #[br(count = 2)]
     code: Vec<u16>,
 }
@@ -229,18 +280,18 @@ pub struct BootBlockExtra {
     system_heap_fract: u32,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, BinRead, BinWrite)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, BinRead, BinWrite)]
 #[brw(big)]
 pub struct Point {
-    y: i16,
-    x: i16,
+    pub y: i16,
+    pub x: i16,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, BinRead, BinWrite)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, BinRead, BinWrite)]
 #[brw(big)]
 pub struct Rect {
-    top_left: Point,
-    bottom_right: Point,
+    pub top_left: Point,
+    pub bottom_right: Point,
 }
 
 #[derive(Debug, Clone, BinRead, BinWrite)]
@@ -262,4 +313,43 @@ pub struct ExtraFinderInfo {
     flags: u8,
     comment_id: u16,
     home_dir_id: u32,
+}
+
+#[bitfield(u8)]
+pub struct Style {
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    outline: bool,
+    shadow: bool,
+    condense: bool,
+    extend: bool,
+    __: bool,
+}
+
+impl BinRead for Style {
+    type Args<'a> = ();
+    fn read_options<R: binrw::io::Read + binrw::io::Seek>(
+        reader: &mut R,
+        endian: binrw::Endian,
+        args: Self::Args<'_>,
+    ) -> BinResult<Self> {
+        let mut buf = [0];
+        reader.read_exact(&mut buf)?;
+        Ok(Self::from(buf[0]))
+    }
+}
+
+impl BinWrite for Style {
+    type Args<'a> = ();
+    fn write_options<W: binrw::io::Write + binrw::io::Seek>(
+        &self,
+        writer: &mut W,
+        endian: binrw::Endian,
+        args: Self::Args<'_>,
+    ) -> BinResult<()> {
+        let buf = [self.into_bits()];
+        writer.write_all(&buf)?;
+        Ok(())
+    }
 }

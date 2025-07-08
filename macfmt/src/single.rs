@@ -1,33 +1,46 @@
 use std::{fmt, mem};
 
-use crate::rsrc::Resource;
 use crate::common::{DateTime2k, PascalString, UnsizedPascalString};
-use binrw::{BinResult, BinRead, BinWrite};
+use crate::rsrc::Resource;
 use binrw::io::SeekFrom;
+use binrw::{BinRead, BinResult, BinWrite};
 use derivative::Derivative;
-
 
 #[derive(Derivative, Clone, BinRead)]
 #[derivative(Debug)]
-#[brw(big, magic = b"\x00\x05\x16\x07")]
-pub struct AppleDoubleHeader {
-    #[brw(pad_after = 16)]
-    version: u32,
-    entry_count: u16,
-    #[br(count = entry_count)]
-    entries: Vec<Entry>,
+#[brw(big)]
+pub enum AppleFile {
+    #[brw(magic = b"\x00\x05\x16\x07")]
+    Double(Header),
+    #[brw(magic = b"\x00\x05\x16\x00")]
+    Single(Header),
 }
 
-impl AppleDoubleHeader {
+impl AppleFile {
+    fn header(&self) -> &Header {
+        match self {
+            AppleFile::Single(hdr) => hdr,
+            AppleFile::Double(hdr) => hdr,
+        }
+    }
     pub fn entries(&self) -> impl Iterator<Item = &EntryData> {
-        self.entries.iter().map(|v| &v.data)
+        self.header().entries()
+    }
+    pub fn resource_fork(&self) -> Option<&[u8]> {
+        for entry in self.header().entries() {
+            if let EntryData::ResourceFork(vec) = entry {
+                return Some(vec);
+            }
+        }
+
+        None
     }
 }
 
 #[derive(Derivative, Clone, BinRead)]
 #[derivative(Debug)]
-#[brw(big, magic = b"\x00\x05\x16\x00")]
-pub struct AppleSingle {
+#[brw(big)]
+pub struct Header {
     #[brw(pad_after = 16)]
     version: u32,
     entry_count: u16,
@@ -35,7 +48,7 @@ pub struct AppleSingle {
     entries: Vec<Entry>,
 }
 
-impl AppleSingle {
+impl Header {
     pub fn entries(&self) -> impl Iterator<Item = &EntryData> {
         self.entries.iter().map(|v| &v.data)
     }
@@ -60,12 +73,13 @@ pub struct Entry {
 #[br(import { id: u32, length: u32 })]
 pub enum EntryData {
     #[br(pre_assert(id == 1))]
-    DataFork(#[br(count = length)] #[derivative(Debug = "ignore")] Vec<u8>),
-    #[br(pre_assert(id == 2))]
-    ResourceFork(
-        #[br(parse_with = parse_resources)]
-        Vec<Resource>
+    DataFork(
+        #[br(count = length)]
+        #[derivative(Debug = "ignore")]
+        Vec<u8>,
     ),
+    #[br(pre_assert(id == 2))]
+    ResourceFork(#[br(count = length)] Vec<u8>),
     #[br(pre_assert(id == 3))]
     FileName(#[br(count = length)] UnsizedPascalString),
     #[br(pre_assert(id == 4))]
@@ -92,9 +106,7 @@ pub enum EntryData {
         aux_type: u32,
     },
     #[br(pre_assert(id == 12))]
-    MsDosFileInfo {
-        attrs: u16,
-    },
+    MsDosFileInfo { attrs: u16 },
     #[br(pre_assert(id == 13))]
     AfpShortName(#[br(count = length)] Vec<u8>),
     #[br(pre_assert(id == 14))]

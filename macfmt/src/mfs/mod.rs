@@ -1,17 +1,16 @@
 use std::ffi::OsStr;
-use std::time::SystemTime;
 use std::io;
+use std::time::SystemTime;
 
 use binrw::{
-    BinRead, BinWrite, BinResult,
+    BinRead, BinResult, BinWrite, binread,
     io::{Read, Seek, SeekFrom},
-    binread,
 };
-use bitflags::bitflags;
 use bitfield_struct::bitfield;
+use bitflags::bitflags;
 use derivative::Derivative;
 
-use crate::common::{DateTime, PascalString, BootBlocks, SizedString, DynamicPascalString};
+use crate::common::{BootBlocks, DateTime, DynamicPascalString, PascalString, SizedString};
 
 //pub mod fuse;
 
@@ -39,7 +38,8 @@ impl<'a> io::Write for FileWriter<'a> {
         let mut data = io::Cursor::new(self.mfs.file_contents(self.file, self.fork));
         data.seek(SeekFrom::Start(self.offset))?;
         data.write_all(buf)?;
-        self.mfs.overwrite_contents(self.file, self.fork, data.into_inner())?;
+        self.mfs
+            .overwrite_contents(self.file, self.fork, data.into_inner())?;
         Ok(buf.len())
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -140,15 +140,15 @@ impl Mfs {
             let old_file_end_block = (file.data_fork_size / self.info.alloc_block_size) as usize;
             let old_file_end_rem = (file.data_fork_size % self.info.alloc_block_size) as usize;
             let block_size = self.info.alloc_block_size as usize;
-            let blocks: Vec<u16> = self.block_map
+            let blocks: Vec<u16> = self
+                .block_map
                 .blocks_of(file.data_fork_start)
                 .skip(old_file_end_block)
                 .collect();
             let mut iter = blocks.into_iter();
             let mut to_write = (block_size as usize).min(data.len());
 
-            self.alloc_block_data_mut(iter.next().unwrap())
-                [old_file_end_rem..][..to_write]
+            self.alloc_block_data_mut(iter.next().unwrap())[old_file_end_rem..][..to_write]
                 .copy_from_slice(&data[..to_write]);
 
             if data.len() <= to_write {
@@ -159,9 +159,7 @@ impl Mfs {
 
             for block in iter {
                 let mut to_write = (block_size as usize).min(data.len());
-                self.alloc_block_data_mut(block)
-                    [..to_write]
-                    .copy_from_slice(&data[..to_write]);
+                self.alloc_block_data_mut(block)[..to_write].copy_from_slice(&data[..to_write]);
                 if data.len() <= to_write {
                     return;
                 }
@@ -171,13 +169,19 @@ impl Mfs {
     }
     pub fn file_contents(&self, file: FileHandle, fork: Fork) -> Vec<u8> {
         let file = &self.files[file.0];
-        self.block_map.blocks_of(file.fork_start(fork))
+        self.block_map
+            .blocks_of(file.fork_start(fork))
             .flat_map(|block| self.alloc_block_data(block))
             .take(file.fork_size(fork) as usize)
             .map(|v| *v)
             .collect()
     }
-    fn overwrite_contents(&mut self, file: FileHandle, fork: Fork, data: Vec<u8>) -> io::Result<()> {
+    fn overwrite_contents(
+        &mut self,
+        file: FileHandle,
+        fork: Fork,
+        data: Vec<u8>,
+    ) -> io::Result<()> {
         let file = &self.files[file.0];
         if self.block_map.blocks_of(file.fork_start(fork)).count() < (data.len() + 511) / 512 {
             self.block_map.ensure_len(file.fork_start(fork))?;
@@ -192,14 +196,15 @@ impl Mfs {
     }
     fn alloc_block_data_mut(&mut self, block: u16) -> &mut [u8] {
         let start = (block as usize * self.info.alloc_block_size as usize);
-        &mut self.contents[start as usize ..][..self.info.alloc_block_size as usize]
+        &mut self.contents[start as usize..][..self.info.alloc_block_size as usize]
     }
     fn alloc_block_data(&self, block: u16) -> &[u8] {
         let start = (block as usize * self.info.alloc_block_size as usize);
-        &self.contents[start as usize ..][..self.info.alloc_block_size as usize]
+        &self.contents[start as usize..][..self.info.alloc_block_size as usize]
     }
     fn drop_nonexistent_files(files: Vec<FileDirectoryBlock>) -> Vec<FileDirectoryBlock> {
-        files.into_iter()
+        files
+            .into_iter()
             .filter(|f| f.flags.contains(FileFlags::EXISTS))
             .collect()
     }
@@ -217,13 +222,12 @@ fn nib_lo(v: u8) -> u8 {
 
 #[inline(always)]
 fn u16_from_nibs(n1: u8, n2: u8, n3: u8) -> u16 {
-    (n1 as u16) << 8 |
-        (n2 as u16) << 4 |
-        (n3 as u16)
+    (n1 as u16) << 8 | (n2 as u16) << 4 | (n3 as u16)
 }
 
 fn gimme_block_map(v: Vec<u8>) -> BlockMap {
-    let vec: Vec<u16> = v.chunks_exact(3)
+    let vec: Vec<u16> = v
+        .chunks_exact(3)
         .flat_map(|slice| {
             [
                 u16_from_nibs(nib_hi(slice[0]), nib_lo(slice[0]), nib_hi(slice[1])),
@@ -251,7 +255,7 @@ impl<'a> Iterator for BlockIter<'a> {
                 self.cur_idx = *self.data.get(self.cur_idx as usize - 2)?;
                 println!("{:x} => {:x}", old, self.cur_idx);
                 Some(old - 2)
-            },
+            }
         }
     }
 }
@@ -264,13 +268,13 @@ impl BlockMap {
         todo!()
     }
     fn allocate_to(&mut self, num: Option<u16>) -> u16 {
-        let free = self.0
+        let free = self
+            .0
             .iter()
             .enumerate()
             .find(|(_, v)| **v == 0)
             .map(|(i, _)| i)
-            .unwrap()
-            as u16;
+            .unwrap() as u16;
         if let Some(n) = num {
             self.0[n as usize] = free;
         }
@@ -379,11 +383,12 @@ bitflags! {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Write, Cursor};
     use super::{Fork, Mfs};
-    const INFINITE_DSK: &'static [u8] = include_bytes!(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/infinite.dsk")
-    );
+    use std::io::{Cursor, Write};
+    const INFINITE_DSK: &'static [u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/testdata/infinite.dsk"
+    ));
     const READ_ME: &'static [u8] = b"This disk contains some software for early Macs. It uses the MFS format (the file system supported by System 1.0 through 2.0).\r\rFor a more complete set of software, use System 2.1 or higher. It supports HFS, and has access to a much larger (1GB+) library.";
     #[test]
     fn read() {
@@ -400,7 +405,8 @@ mod tests {
         mfs.add_file("testfile", *b"TEST", *b"TEST");
         let file = mfs.file_by_name("testfile").unwrap();
         mfs.file_writer(file, Fork::Data)
-            .write_all(b"test data").unwrap();
+            .write_all(b"test data")
+            .unwrap();
         assert_eq!(mfs.file_data(file), b"test data");
     }
 }
