@@ -1,9 +1,6 @@
-use std::{fmt, mem};
-
-use crate::common::{DateTime2k, PascalString, UnsizedPascalString};
-use crate::rsrc::Resource;
+use crate::common::UnsizedPascalString;
 use binrw::io::SeekFrom;
-use binrw::{BinRead, BinResult, BinWrite};
+use binrw::BinRead;
 use derivative::Derivative;
 
 #[derive(Derivative, Clone, BinRead)]
@@ -120,9 +117,4 @@ pub enum EntryData {
         #[derivative(Debug = "ignore")]
         data: Vec<u8>,
     },
-}
-
-#[binrw::parser(reader)]
-fn parse_resources() -> BinResult<Vec<Resource>> {
-    Resource::read(reader)
 }

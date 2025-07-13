@@ -1,12 +1,7 @@
-use std::{fmt, mem};
+//use binrw::{BinRead, BinWrite};
+//use derivative::Derivative;
 
-use crate::common::{DateTime, PascalString};
-use binrw::io::SeekFrom;
-use binrw::{BinRead, BinWrite};
-use derivative::Derivative;
-use static_assertions::assert_eq_size;
-
-#[derive(Debug, Clone, BinRead, BinWrite)]
+/*#[derive(Debug, Clone, BinRead, BinWrite)]
 #[brw(big)]
 pub struct NodeDescriptor {
     forward_link: u32,
@@ -43,7 +38,7 @@ pub struct Node {
 #[brw(big)]
 pub struct Record {
     key_len: u8,
-    #[br(count = (key_len))]
+    #[br(count = key_len)]
     key: Vec<u8>,
 }
 
@@ -88,4 +83,4 @@ pub struct MapRecord {
 
 #[derive(Derivative, Clone, BinRead, BinWrite)]
 #[derivative(Debug)]
-pub struct IndexRecord {}
+pub struct IndexRecord {}*/

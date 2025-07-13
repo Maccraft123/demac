@@ -1,7 +1,7 @@
 use std::fmt;
 
 use binrw::io::{Read, Seek, SeekFrom};
-use binrw::{BinRead, BinResult, BinWrite, NullString, binread};
+use binrw::{BinRead, BinResult, NullString, binread};
 use derivative::Derivative;
 
 use crate::hfs::HfsVolume;
@@ -25,7 +25,7 @@ impl<'a, R: Read + Seek> ApmDrive<'a, R> {
     pub fn drivers(&self) -> &[Driver] {
         &self.table.driver_descriptor.drivers
     }
-    pub fn partition_hfs(&mut self, p: &Partition) -> BinResult<HfsVolume> {
+    pub fn partition_hfs(&mut self, _p: &Partition) -> BinResult<HfsVolume> {
         todo!()
     }
     pub fn read_partition_data(&mut self, p: &Partition) -> BinResult<Vec<u8>> {
@@ -190,7 +190,7 @@ fn partition_type_parser() -> BinResult<PartitionType> {
             "Linux_swap" => Ok(PartitionType::LinuxSwap),
             _ => Ok(PartitionType::Other(s.to_string())),
         },
-        Err(e) => Ok(PartitionType::NonUtf8(buf)),
+        Err(_) => Ok(PartitionType::NonUtf8(buf)),
     }
 }
 
@@ -267,7 +267,7 @@ fn processor_type_parser() -> BinResult<ProcessorType> {
             "" => Ok(ProcessorType::Unspecified),
             _ => Ok(ProcessorType::Other(s.to_string())),
         },
-        Err(e) => Ok(ProcessorType::NonUtf8(buf)),
+        Err(_) => Ok(ProcessorType::NonUtf8(buf)),
     }
 }
 

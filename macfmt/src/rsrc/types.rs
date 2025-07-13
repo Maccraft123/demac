@@ -1,16 +1,13 @@
-use binrw::io::{Read, Seek, SeekFrom};
+use binrw::io::SeekFrom;
 use binrw::{BinRead, BinResult, BinWrite};
 use bitflags::bitflags;
 use bitvec::field::BitField;
 use bitvec::view::BitView;
-//use bitvec::array::BitArray;
 use super::ResourceType;
 use crate::common::{DateTime, DynamicPascalString, Point, Rect, SizedString};
-use crate::i18n::RegionCode;
-use bitvec::order::Lsb0;
+use crate::i18n::{RegionCode, MacRoman, MacScript};
 use bitvec::order::Msb0;
 use derivative::Derivative;
-use std::fmt;
 use std::num::NonZeroU8;
 use strum::{Display, EnumIter, FromRepr};
 
@@ -27,6 +24,7 @@ pub enum Type {
     Menu(Menu),
     SystemVersion(DynamicPascalString),
     String(DynamicPascalString),
+    KeyboardName(DynamicPascalString),
     StringList(StringList),
     RomOverride(RomOverride),
     MfsFolder(MfsFolder),
@@ -38,6 +36,7 @@ pub enum Type {
     Font(Font),
     FinderIcon(IconList<{ image_size(32, 1) }>),
     SmallIcon(IconList<{ image_size(16, 1) }>),
+    SmallIcons(Icon<{ image_size(16, 1) }>),
     Icon(Icon<{ image_size(32, 1) }>),
     Pattern(Icon<{ image_size(8, 1) }>),
     LargeColorIcon4(ColorIcon<{ image_size(32, 4) }, 4>),
@@ -76,6 +75,7 @@ impl Type {
             ResourceType::WindowTemplate => Type::Window(Window::read(&mut cursor)?),
             ResourceType::FinderIcon => Type::FinderIcon(IconList::read(&mut cursor)?),
             ResourceType::SmallIconList => Type::SmallIcon(IconList::read(&mut cursor)?),
+            ResourceType::SmallIcons => Type::SmallIcons(Icon::read(&mut cursor)?),
             ResourceType::AlertBoxTemplate => Type::Alert(Alert::read(&mut cursor)?),
             ResourceType::DialogBoxTemplate => Type::Dialog(Dialog::read(&mut cursor)?),
             ResourceType::Icon => Type::Icon(Icon::read(&mut cursor)?),
@@ -93,6 +93,7 @@ impl Type {
             ResourceType::ItemList => Type::ItemList(ItemList::read(&mut cursor)?),
             ResourceType::VersionNumber => Type::Version(Version::read(&mut cursor)?),
             ResourceType::ColorLut => Type::ColorLut(ColorLut::read(&mut cursor)?),
+            ResourceType::KeyboardName => Type::KeyboardName(DynamicPascalString::read(&mut cursor)?),
             ResourceType::FileReference => Type::FileReference(FileReference::read(&mut cursor)?),
             _ => Type::Other(cursor.into_inner()),
         })
@@ -113,6 +114,9 @@ pub struct ColorLut {
 impl ColorLut {
     pub fn entries(&self) -> &[ClutEntry] {
         &self.entries
+    }
+    pub fn entries_mut(&mut self) -> &mut Vec<ClutEntry> {
+        &mut self.entries
     }
 }
 
@@ -136,6 +140,18 @@ impl ClutEntry {
     }
     pub fn b(&self) -> u16 {
         self.rgb[2]
+    }
+    pub fn set_rgb_f32(&mut self, v: [f32; 3]) {
+        self.rgb[0] = (v[0] * 65535.0) as u16;
+        self.rgb[1] = (v[1] * 65535.0) as u16;
+        self.rgb[2] = (v[2] * 65535.0) as u16;
+    }
+    pub fn rgb_f32(&self) -> [f32; 3] {
+        [
+            self.rgb[0] as f32 / 65535.0,
+            self.rgb[1] as f32 / 65535.0,
+            self.rgb[2] as f32 / 65535.0,
+        ]
     }
     pub fn rgb(&self) -> image::Rgb<u16> {
         image::Rgb(self.rgb)
@@ -630,6 +646,12 @@ pub struct Cursor {
 }
 
 impl Cursor {
+    pub fn img_mut(&mut self) -> &mut Icon<32> {
+        &mut self.img
+    }
+    pub fn mask_mut(&mut self) -> &mut Icon<32> {
+        &mut self.mask
+    }
     pub fn img(&self) -> &Icon<32> {
         &self.img
     }
@@ -842,6 +864,15 @@ impl Menu {
     pub fn items_mut(&mut self) -> &mut Vec<MenuItem> {
         &mut self.items
     }
+    pub fn state_mut(&mut self) -> &mut u32 {
+        &mut self.menu_state
+    }
+    pub fn state(&self) -> u32 {
+        self.menu_state
+    }
+    pub fn set_state(&mut self, new: u32) {
+        self.menu_state = new;
+    }
 }
 
 #[derive(Clone, Derivative, BinRead, Eq, PartialEq)]
@@ -968,7 +999,7 @@ pub enum MarkingCharacter {
     Checkmark,
     FullDiamond,
     EmptyDiamond,
-    Other(char),
+    Other(MacRoman),
 }
 
 impl MarkingCharacter {
@@ -976,13 +1007,13 @@ impl MarkingCharacter {
         match v {
             0x00 => None,
             0x12 => Some(Self::Checkmark),
-            _ => Some(Self::Other(crate::i18n::macroman_decode(v))),
+            _ => Some(Self::Other(MacRoman::from(v))),
         }
     }
     pub fn to_u8(self) -> u8 {
         match self {
             Self::Checkmark => 0x12,
-            Self::Other(v) => crate::i18n::macroman_encode(v).unwrap(),
+            Self::Other(v) => v.to_u8(),
             _ => todo!(),
         }
     }

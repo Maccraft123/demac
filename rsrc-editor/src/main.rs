@@ -1,10 +1,10 @@
 use binrw::BinRead;
 use clap::Parser;
 use eframe::egui;
-use egui::Rect;
+use egui::{RichText, Rect};
 use macfmt::i18n::RegionCode;
 use macfmt::macbinary::{MacBinary2, is_macbinary2};
-use macfmt::rsrc::Resource;
+use macfmt::rsrc::{Resource, ResourceType};
 use macfmt::rsrc::types::{
     DevelopmentStage, ItemType, KeyboardShortcut, MarkingCharacter, MenuItem, MenuItemConfig,
     SizeFlags, Type,
@@ -14,6 +14,9 @@ use std::fs::File;
 use std::io::{Cursor, Read, Seek};
 use std::path::PathBuf;
 use strum::IntoEnumIterator;
+
+mod util;
+use util::icon_editor;
 
 #[derive(Parser)]
 struct Args {
@@ -55,16 +58,16 @@ fn main() -> eframe::Result {
     let luts: Vec<(String, Vec<(u16, image::Rgb<u16>)>)> = res
         .iter()
         .filter_map(|entry| {
-            if let Type::ColorLut(clut) = entry.data() {
+            /*if let Type::ColorLut(clut) = entry.data() {
                 let name = entry.name().unwrap_or("<unnamed>");
                 let mut vec = Vec::new();
                 for lut in clut.entries() {
                     vec.push((lut.pixel(), lut.rgb()))
                 }
                 Some((name.to_string(), vec))
-            } else {
+            } else {*/
                 None
-            }
+            //}
         })
         .collect();
 
@@ -72,6 +75,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
         ..Default::default()
     };
+
     eframe::run_native(
         "My egui App",
         options,
@@ -81,6 +85,7 @@ fn main() -> eframe::Result {
             Ok(Box::new(MyApp {
                 res,
                 cur_res: None,
+                cur_ty: None,
                 scene_rect: Rect::ZERO,
                 luts,
                 lut: None,
@@ -90,7 +95,8 @@ fn main() -> eframe::Result {
 }
 
 struct MyApp {
-    res: Vec<Resource>,
+    res: Vec<(ResourceType, Vec<Resource>)>,
+    cur_ty: Option<(usize, ResourceType)>,
     cur_res: Option<usize>,
     scene_rect: Rect,
     luts: Vec<(String, Vec<(u16, image::Rgb<u16>)>)>,
@@ -102,6 +108,7 @@ impl Default for MyApp {
         Self {
             res: Vec::new(),
             cur_res: None,
+            cur_ty: None,
             scene_rect: Rect::ZERO,
             luts: Vec::new(),
             lut: None,
@@ -112,21 +119,51 @@ impl Default for MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::SidePanel::left("Resource list").show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for (i, res) in self.res.iter().enumerate() {
-                    let name = format!("{:?} {:?}", res.ty(), res.name());
-                    if ui.selectable_label(self.cur_res == Some(i), name).clicked() {
-                        self.cur_res = Some(i);
+            let ty_text = if let Some(ty) = &self.cur_ty {
+                format!("{}", ty.1.inner())
+            } else {
+                String::new()
+            };
+            egui::ComboBox::from_id_salt("Resource Type")
+                .width(ui.available_width())
+                .selected_text(RichText::new(ty_text).monospace())
+                .show_ui(ui, |ui| {
+                    let old = self.cur_ty.clone();
+                    for (i, (ty, _)) in self.res.iter().enumerate() {
+                        let text = RichText::new(format!("{}", ty.inner())).monospace();
+                        ui.selectable_value(&mut self.cur_ty, Some((i, ty.clone())), text);
                     }
-                }
-            });
-        });
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(idx) = self.cur_res {
+                    if self.cur_ty != old {
+                        self.cur_res = None;
+                    }
+                });
+
+            if let Some((ty, _)) = &self.cur_ty {
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .show(ui, |ui| {
-                        let res = &mut self.res[idx];
+                    egui::Grid::new("Type selector").show(ui, |ui| {
+                        ui.label("ID");
+                        ui.label("Name");
+                        ui.end_row();
+
+                        for (i, res) in self.res[*ty].1.iter().enumerate() {
+                            ui.selectable_value(&mut self.cur_res, Some(i), format!("{}", res.id()));
+                            if let Some(name) = res.name().as_ref() {
+                                ui.label(format!("{:?}", name));
+                            }
+                            ui.end_row();
+                        }
+                    });
+                });
+            }
+        });
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if let Some((ty_idx, _)) = self.cur_ty && let Some(idx) = self.cur_res {
+                egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        let res = &mut self.res[ty_idx].1[idx];
                         egui::ComboBox::from_label("Heap")
                             .selected_text(if res.system_heap {
                                 "System"
@@ -145,7 +182,10 @@ impl eframe::App for MyApp {
                         match res.data_mut() {
                             Type::String(s) => {
                                 ui.text_edit_multiline(s.as_mut());
-                            }
+                            },
+                            Type::KeyboardName(s) => {
+                                ui.text_edit_singleline(s.as_mut());
+                            },
                             Type::Bundle(bundle) => {
                                 ui.label(format!("Signature: {}", bundle.sig()));
                                 for ty in bundle.types() {
@@ -168,87 +208,29 @@ impl eframe::App for MyApp {
                                 }
                             }
                             Type::ColorLut(lut) => {
-                                for entry in lut.entries() {
+                                for entry in lut.entries_mut() {
                                     ui.horizontal(|ui| {
                                         ui.label(format!("Pixel: {}", entry.pixel()));
-                                        let colors: [u16; 3] = entry.rgb().0;
-                                        let mut colors: [f32; 3] = [
-                                            colors[0] as f32 / 65536.0,
-                                            colors[1] as f32 / 65536.0,
-                                            colors[2] as f32 / 65536.0,
-                                        ];
+                                        let mut colors: [f32; 3] = entry.rgb_f32();
                                         ui.color_edit_button_rgb(&mut colors);
+                                        entry.set_rgb_f32(colors);
                                     });
                                 }
                             }
                             Type::FinderIcon(icon) => {
-                                use egui::{Color32, CornerRadius, Pos2, Vec2};
-                                ui.heading("Finder icon:");
-                                egui::Scene::new().zoom_range(0.0..=100.0).show(
-                                    ui,
-                                    &mut self.scene_rect,
-                                    |ui| {
-                                        let size = Vec2 {
-                                            x: icon.side() as f32,
-                                            y: icon.side() as f32,
-                                        };
-
-                                        let (resp, painter) = ui.allocate_painter(
-                                            size,
-                                            egui::Sense::HOVER | egui::Sense::CLICK,
-                                        );
-                                        if resp.clicked()
-                                            && let Some(Pos2 { x, y }) = resp.interact_pointer_pos()
-                                        {
-                                            let x = x as usize;
-                                            let y = y as usize;
-                                            let val = icon.bw_mut().pixel(x, y);
-                                            icon.bw_mut().set_pixel(x, y, !val);
-                                        }
-                                        let mut img = icon.bw().image();
-
-                                        for (x, y, px) in img.enumerate_pixels_mut() {
-                                            let pos = Pos2 {
-                                                x: (x as f32),
-                                                y: (y as f32),
-                                            };
-                                            let pixel = Vec2 { x: 1.0, y: 1.0 };
-                                            let rect = Rect::from_min_size(pos, pixel);
-                                            painter.rect_filled(
-                                                rect,
-                                                CornerRadius::ZERO,
-                                                Color32::from_gray(!px[0]),
-                                            );
-                                        }
-                                    },
-                                );
-                                /*
-                                let mut cursor = std::io::Cursor::new(Vec::new());
-                                icon.write_to(&mut cursor).unwrap();
-                                let bytes = icon.bw().to_vec();
-                                let uri = format!("bytes://findericon-{}.bmp", res.id());
-                                ui.add(
-                                    egui::Image::from_bytes(uri, cursor.into_inner())
-                                );*/
+                                ui.add(icon_editor(icon.bw_mut(), &mut self.scene_rect));
                             }
                             Type::Cursor(crsr) => {
-                                ui.heading("Cursor icon:");
-                                let mut cursor = std::io::Cursor::new(Vec::new());
-                                crsr.img().write_to(&mut cursor).unwrap();
-                                let uri = format!("bytes://cursor-{}.bmp", res.id());
-                                ui.add(egui::Image::from_bytes(uri, cursor.into_inner()));
+                                ui.add(icon_editor(crsr.img_mut(), &mut self.scene_rect));
                             }
                             Type::Pattern(img) => {
-                                let mut cursor = std::io::Cursor::new(Vec::new());
-                                img.write_to(&mut cursor).unwrap();
-                                let uri = format!("bytes://{:?}-{}.bmp", res.ty(), res.id());
-                                ui.add(egui::Image::from_bytes(uri, cursor.into_inner()));
+                                ui.add(icon_editor(img, &mut self.scene_rect));
                             }
                             Type::Icon(img) => {
-                                let mut cursor = std::io::Cursor::new(Vec::new());
-                                img.write_to(&mut cursor).unwrap();
-                                let uri = format!("bytes://{:?}-{}.bmp", res.ty(), res.id());
-                                ui.add(egui::Image::from_bytes(uri, cursor.into_inner()));
+                                ui.add(icon_editor(img, &mut self.scene_rect));
+                            }
+                            Type::SmallIcons(img) => {
+                                ui.add(icon_editor(img, &mut self.scene_rect));
                             }
                             Type::LargeColorIcon4(img) => {
                                 let mut cursor = std::io::Cursor::new(Vec::new());
@@ -363,12 +345,27 @@ impl eframe::App for MyApp {
                                     });
                             }
                             Type::Menu(menu) => {
-                                ui.label("Title:");
-                                ui.text_edit_singleline(menu.title_mut());
+                                let mut enableds = [false; 32];
+                                for offset in 0..32 {
+                                    enableds[offset] = menu.state() & (1 << offset) != 0;
+                                }
+                                ui.checkbox(&mut enableds[0], "Menu enabled");
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Title:");
+                                    ui.text_edit_singleline(menu.title_mut());
+                                });
+                                
                                 ui.label("Items:");
                                 let mut to_remove = None;
                                 for (i, item) in menu.items_mut().into_iter().enumerate() {
                                     ui.horizontal_top(|ui| {
+                                        if i < 31 {
+                                            ui.checkbox(&mut enableds[i+1], "Enable item");
+                                        } else {
+                                            ui.add_enabled(false, egui::widgets::Checkbox::new(&mut true, "Enable item"));
+                                        }
+                                        
                                         if ui.button("-").clicked() {
                                             to_remove = Some(i);
                                         };
@@ -446,6 +443,14 @@ impl eframe::App for MyApp {
                                         }
                                     });
                                 }
+
+                                let mut bitmask = 0;
+                                for (i, enabled) in enableds.into_iter().enumerate() {
+                                    if enabled {
+                                        bitmask |= 1 << i;
+                                    }
+                                }
+                                menu.set_state(bitmask);
 
                                 if let Some(index) = to_remove {
                                     menu.items_mut().remove(index);

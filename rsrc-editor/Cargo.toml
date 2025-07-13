@@ -12,3 +12,4 @@ env_logger = "0.11.8"
 image = "0.25.6"
 macfmt = { version = "0.1.0", path = "../macfmt" }
 strum = "0.27.1"
+thiserror = "2.0.12"

@@ -534,7 +534,7 @@ pub fn decode_inner(iter: &mut impl Fetch) -> Option<Instruction> {
         0b0111 if nibbles[2] & 1 == 0 => Some(Instruction::Moveq(op as u8, D(octs[3]))),
         0b1000 => {
             match Size::decode(op) {
-                Some(size) => {
+                Some(_size) => {
                     if nibbles[1] == 0 && nibbles[2] & 1 == 1 {
                         let rm = if octs[1] & 1 == 0 {
                             Rm::R(D(octs[0]), D(octs[3]))
@@ -543,7 +543,7 @@ pub fn decode_inner(iter: &mut impl Fetch) -> Option<Instruction> {
                         };
                         Some(Instruction::Sbcd(rm))
                     } else {
-                        let dir = if octs[2] & 0b100 == 0 {
+                        let _dir = if octs[2] & 0b100 == 0 {
                             OpResult::Register
                         } else {
                             OpResult::EffectiveAddress

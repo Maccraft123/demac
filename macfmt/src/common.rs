@@ -2,17 +2,11 @@ use std::fmt;
 use std::str::Utf8Error;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::i18n::macroman_decode;
+use crate::i18n::{MacRoman, MacScript};
 use binrw::{BinRead, BinResult, BinWrite};
 use bitfield_struct::bitfield;
-use deku::{
-    DekuError, DekuRead, DekuReader,
-    ctx::Endian,
-    no_std_io::{Read, Seek},
-    reader::Reader,
-};
 use derivative::Derivative;
-use time::{OffsetDateTime, PrimitiveDateTime};
+use time::OffsetDateTime;
 
 #[derive(Clone, Eq, PartialEq, BinRead, BinWrite)]
 pub struct SizedString<const SIZE: usize> {
@@ -71,8 +65,8 @@ impl<const CAP: usize> fmt::Debug for PascalString<CAP> {
 #[brw(big)]
 pub struct DynamicPascalString {
     len: u8,
-    #[br(count = len, map = |buf: Vec<u8>| buf.into_iter().map(|b| macroman_decode(b)).collect())]
-    #[bw(map = |s: &String| s.as_bytes())]
+    #[br(count = len, map = |buf: Vec<u8>| buf.into_iter().map(|b| MacRoman::decode(b)).collect())]
+    #[bw(try_map = |s: &String| s.chars().map(|v| MacRoman::encode(v)).collect::<Result<Vec<u8>, _>>())]
     data: String,
 }
 
@@ -163,10 +157,6 @@ impl DateTime2k {
     fn epoch_start() -> OffsetDateTime {
         time::macros::datetime!(2000-01-01 00:00).assume_offset(UtcOffset::UTC)
     }
-    fn to_unix_timestamp(self) -> i64 {
-        let tmp: OffsetDateTime = self.into();
-        tmp.unix_timestamp()
-    }
 }
 
 impl From<&DateTime2k> for OffsetDateTime {
@@ -188,9 +178,8 @@ impl fmt::Debug for DateTime2k {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, DekuRead, BinRead, BinWrite)]
+#[derive(Clone, Copy, Eq, PartialEq, BinRead, BinWrite)]
 #[brw(big)]
-#[deku(endian = "big", ctx = "_: Endian")]
 #[repr(transparent)]
 pub struct DateTime(u32);
 
@@ -214,10 +203,6 @@ impl DateTime {
     }
     fn epoch_start() -> OffsetDateTime {
         time::macros::datetime!(1904-01-01 00:00).assume_offset(UtcOffset::UTC)
-    }
-    fn to_unix_timestamp(self) -> i64 {
-        let tmp: OffsetDateTime = self.into();
-        tmp.unix_timestamp()
     }
 }
 
@@ -267,7 +252,7 @@ pub struct BootBlocks {
 }
 
 impl BootBlocks {
-    fn code_vec_fmt(v: &Vec<u16>, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn code_vec_fmt(_v: &Vec<u16>, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "(...)")
     }
 }
@@ -331,8 +316,8 @@ impl BinRead for Style {
     type Args<'a> = ();
     fn read_options<R: binrw::io::Read + binrw::io::Seek>(
         reader: &mut R,
-        endian: binrw::Endian,
-        args: Self::Args<'_>,
+        _: binrw::Endian,
+        _: Self::Args<'_>,
     ) -> BinResult<Self> {
         let mut buf = [0];
         reader.read_exact(&mut buf)?;
@@ -345,8 +330,8 @@ impl BinWrite for Style {
     fn write_options<W: binrw::io::Write + binrw::io::Seek>(
         &self,
         writer: &mut W,
-        endian: binrw::Endian,
-        args: Self::Args<'_>,
+        _: binrw::Endian,
+        _: Self::Args<'_>,
     ) -> BinResult<()> {
         let buf = [self.into_bits()];
         writer.write_all(&buf)?;

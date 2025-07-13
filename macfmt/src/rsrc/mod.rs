@@ -1,12 +1,13 @@
 use crate::common::{DynamicPascalString, SizedString};
 use binrw::{
     BinRead, BinResult, BinWrite,
-    io::{Read, Seek, SeekFrom},
+    io::{Read, Seek, Cursor},
 };
 use bitflags::bitflags;
 use derivative::Derivative;
 
 pub mod types;
+pub mod compression;
 
 #[derive(Clone, Debug)]
 pub struct Resource {
@@ -38,18 +39,48 @@ impl Resource {
     pub fn name(&self) -> Option<&str> {
         self.name.as_ref().map(|v| v.try_as_str().unwrap())
     }
-    pub fn read<R: Read + Seek>(reader: &mut R) -> BinResult<Vec<Resource>> {
+    pub fn read<R: Read + Seek>(reader: &mut R) -> BinResult<Vec<(ResourceType, Vec<Resource>)>> {
         let raw = RawResource::read(reader)?;
         let mut ret = Vec::new();
-        let mut ref_iter = raw.refs.iter();
+        let mut decomped = false;
         for t in raw.types.iter() {
+            let mut refs = Vec::new();
             for r in raw.refs_of(t) {
-                if r.attrs.contains(Attributes::COMPRESSED) {
-                    println!("compressed, skipping...");
-                }
+                let data = if r.attrs.contains(Attributes::COMPRESSED) {
+                    println!("{} compressed, skipping...", t.ty.inner());
+                    if decomped {
+                      continue;
+                    }
+                    decomped = true;
+                    let mut cursor = Cursor::new(raw.data_of(r));
+                    let header = compression::Header::read(&mut cursor)?;
+                    println!("{:#x?}", header);
+                    let data = header.decompress(&mut cursor)?;
+                    let mut counter = 0;
+                    println!("Decompressed {} ID {}", t.ty.inner(), r.res_id);
+                    for (i, byte) in data.iter().enumerate() {
+                        match counter {
+                            0 => {
+                                print!("{:06x}    ", i);
+                                print!("{:02x}", byte);
+                            },
+                            2 | 4 | 6 => print!("{:02x}", byte),
+                            1 | 3 | 5 => print!("{:02x} ", byte),
+                            7 => println!("{:02x}", byte),
+                            _ => unreachable!(),
+                        }
+                        counter += 1;
+                        if counter == 8 {
+                            counter = 0;
+                        }
+                    }
+                    data
+                } else {
+                    raw.data_of(r).to_owned()
+                };
 
-                let data = types::Type::new(&t.ty, r.res_id, raw.data_of(r).to_owned())?;
-                ret.push(Resource {
+                let data = types::Type::new(&t.ty, r.res_id, data)?;
+                refs.push(Resource {
                     id: r.res_id,
                     ty: t.ty.clone(),
                     system_heap: r.attrs.contains(Attributes::SYSTEM_HEAP),
@@ -62,6 +93,8 @@ impl Resource {
                     name: raw.name_of(r).cloned(),
                 });
             }
+
+            ret.push((t.ty.clone(), refs));
         }
 
         Ok(ret)
@@ -206,6 +239,15 @@ macro_rules! sized_string_enum {
                 }
             }
         }
+        impl $name {
+            pub fn inner(&self) -> String {
+                let s: SizedString<$size> = self.clone().into();
+                match s.try_as_str() {
+                    Ok(val) => val.to_owned(),
+                    Err(e) => format!("{:x?}", s.as_inner()),
+                }
+            }
+        }
     }
 }
 
@@ -320,4 +362,5 @@ sized_string_enum!(
     (b"CNTL" => Control),
     (b"acur" => AnimatedCursor),
     (b"TMPL" => Template),
+    (b"KBDN" => KeyboardName),
 );

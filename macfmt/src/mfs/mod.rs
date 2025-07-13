@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::io;
 use std::time::SystemTime;
 
@@ -6,7 +5,6 @@ use binrw::{
     BinRead, BinResult, BinWrite, binread,
     io::{Read, Seek, SeekFrom},
 };
-use bitfield_struct::bitfield;
 use bitflags::bitflags;
 use derivative::Derivative;
 
@@ -33,8 +31,8 @@ pub struct FileWriter<'a> {
 
 impl<'a> io::Write for FileWriter<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let offset_blocks = self.offset / 512;
-        let offset_rem = self.offset % 512;
+        let _offset_blocks = self.offset / 512;
+        let _offset_rem = self.offset % 512;
         let mut data = io::Cursor::new(self.mfs.file_contents(self.file, self.fork));
         data.seek(SeekFrom::Start(self.offset))?;
         data.write_all(buf)?;
@@ -48,7 +46,7 @@ impl<'a> io::Write for FileWriter<'a> {
 }
 
 impl<'a> io::Seek for FileWriter<'a> {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+    fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
         todo!()
     }
 }
@@ -146,7 +144,7 @@ impl Mfs {
                 .skip(old_file_end_block)
                 .collect();
             let mut iter = blocks.into_iter();
-            let mut to_write = (block_size as usize).min(data.len());
+            let to_write = (block_size as usize).min(data.len());
 
             self.alloc_block_data_mut(iter.next().unwrap())[old_file_end_rem..][..to_write]
                 .copy_from_slice(&data[..to_write]);
@@ -158,7 +156,7 @@ impl Mfs {
             data = &data[old_file_end_rem..];
 
             for block in iter {
-                let mut to_write = (block_size as usize).min(data.len());
+                let to_write = (block_size as usize).min(data.len());
                 self.alloc_block_data_mut(block)[..to_write].copy_from_slice(&data[..to_write]);
                 if data.len() <= to_write {
                     return;
@@ -195,11 +193,11 @@ impl Mfs {
         self.file_contents(file, Fork::Resource)
     }
     fn alloc_block_data_mut(&mut self, block: u16) -> &mut [u8] {
-        let start = (block as usize * self.info.alloc_block_size as usize);
+        let start = block as usize * self.info.alloc_block_size as usize;
         &mut self.contents[start as usize..][..self.info.alloc_block_size as usize]
     }
     fn alloc_block_data(&self, block: u16) -> &[u8] {
-        let start = (block as usize * self.info.alloc_block_size as usize);
+        let start = block as usize * self.info.alloc_block_size as usize;
         &self.contents[start as usize..][..self.info.alloc_block_size as usize]
     }
     fn drop_nonexistent_files(files: Vec<FileDirectoryBlock>) -> Vec<FileDirectoryBlock> {
@@ -247,7 +245,6 @@ impl<'a> Iterator for BlockIter<'a> {
     type Item = u16;
 
     fn next(&mut self) -> Option<u16> {
-        let old = self.cur_idx;
         match self.cur_idx {
             0 | 1 => None,
             _ => {
@@ -264,10 +261,10 @@ impl<'a> Iterator for BlockIter<'a> {
 pub struct BlockMap(Vec<u16>);
 
 impl BlockMap {
-    fn ensure_len(&mut self, block: u16) -> io::Result<()> {
+    fn ensure_len(&mut self, _block: u16) -> io::Result<()> {
         todo!()
     }
-    fn allocate_to(&mut self, num: Option<u16>) -> u16 {
+    /*fn allocate_to(&mut self, num: Option<u16>) -> u16 {
         let free = self
             .0
             .iter()
@@ -279,8 +276,8 @@ impl BlockMap {
             self.0[n as usize] = free;
         }
         free
-    }
-    fn blocks_of(&self, start: u16) -> BlockIter {
+    }*/
+    fn blocks_of<'a>(&'a self, start: u16) -> BlockIter<'a> {
         BlockIter {
             cur_idx: start,
             data: &self.0,
@@ -332,9 +329,9 @@ pub struct FileDirectoryBlock {
 }
 
 impl FileDirectoryBlock {
-    fn fork_free_space(&self, fork: Fork) -> u32 {
-        self.fork_allocated_space(fork) - self.fork_size(fork)
-    }
+    //fn fork_free_space(&self, fork: Fork) -> u32 {
+    //    self.fork_allocated_space(fork) - self.fork_size(fork)
+    //}
     pub fn fork_start(&self, fork: Fork) -> u16 {
         match fork {
             Fork::Data => self.data_fork_start,

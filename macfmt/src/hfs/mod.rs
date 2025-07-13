@@ -1,15 +1,14 @@
-use std::{fmt, mem};
+use std::fmt;
 
-use crate::common::{DateTime, PascalString};
+use crate::common::PascalString;
 use binrw::{BinRead, BinWrite};
 use derivative::Derivative;
-use static_assertions::assert_eq_size;
 
 mod btree;
 
-fn div_ceil(x: u16, y: u32) -> u32 {
-    ((x as u32 + y - 1) / y)
-}
+//fn div_ceil(x: u16, y: u32) -> u32 {
+//    (x as u32 + y - 1) / y
+//}
 
 #[derive(Derivative, Clone, BinRead, BinWrite)]
 #[derivative(Debug)]
@@ -110,7 +109,7 @@ impl BootBlockHeader {
     pub fn code_iter(&self) -> impl Iterator<Item = un68k::Instruction> {
         un68k::decode_iter(self.code.clone())
     }
-    fn code_vec_fmt(v: &Vec<u16>, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn code_vec_fmt(_v: &Vec<u16>, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "(...)")
     }
 }
