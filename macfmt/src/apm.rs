@@ -4,7 +4,7 @@ use binrw::io::{Read, Seek, SeekFrom};
 use binrw::{BinRead, BinResult, NullString, binread};
 use derivative::Derivative;
 
-use crate::hfs::HfsVolume;
+use crate::fs::hfs::HfsVolume;
 
 pub struct ApmDrive<'a, R: Read + Seek> {
     table: ApmTable,

@@ -244,7 +244,7 @@ macro_rules! sized_string_enum {
                 let s: SizedString<$size> = self.clone().into();
                 match s.try_as_str() {
                     Ok(val) => val.to_owned(),
-                    Err(e) => format!("{:x?}", s.as_inner()),
+                    Err(_) => format!("{:x?}", s.as_inner()),
                 }
             }
         }

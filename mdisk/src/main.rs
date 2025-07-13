@@ -7,7 +7,7 @@ use binrw::BinRead;
 use clap::{Parser, ValueEnum};
 use comfy_table::Table;
 use macfmt::apm::{ApmDrive, Driver, Partition};
-use macfmt::mfs::Mfs;
+use macfmt::fs::mfs::Mfs;
 
 #[derive(Debug, Clone, Parser)]
 struct Args {

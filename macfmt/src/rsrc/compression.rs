@@ -119,8 +119,7 @@ fn undonnbits<R: Read + Seek>(r: &mut R, len: usize) -> BinResult<Vec<u8>> {
             0x20 | 0x21 => {
                 let mut tmp = [0];
                 r.read_exact(&mut tmp)?;
-                let mut idx = tmp[0] as usize;
-                let mut idx = 0x28 + ((op as usize & 0xf) << 8) | idx;
+                let idx = 0x28 + ((op as usize & 0xf) << 8) | (tmp[0] as usize);
                 ret.extend(var_tab.get(idx).unwrap());
             },
             0x22 => {
@@ -164,7 +163,6 @@ fn undonnbits<R: Read + Seek>(r: &mut R, len: usize) -> BinResult<Vec<u8>> {
                 }
             },
             0xff => break,
-            _ => todo!("donnbits token 0x{:02x}", op),
         }
     }
 

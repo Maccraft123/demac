@@ -8,7 +8,8 @@ use binrw::{
 use bitflags::bitflags;
 use derivative::Derivative;
 
-use crate::common::{BootBlocks, DateTime, DynamicPascalString, PascalString, SizedString};
+use crate::common::{DateTime, DynamicPascalString, PascalString, SizedString};
+use super::BootBlocks;
 
 //pub mod fuse;
 
