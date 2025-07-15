@@ -63,6 +63,45 @@ impl Directory {
     }
 }
 
+pub struct FileReader<'a, R: Read + Seek> {
+    vol: &'a mut HfsVolume<R>,
+    cur_offset: usize,
+    len: usize,
+    extents: ExtDataRec,
+}
+
+impl<'a, R: Read + Seek> Read for FileReader<'a, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.cur_offset >= self.len {
+            return Ok(0);
+        }
+
+        let start = self.vol.alloc_blk_offset(self.extents.0[0].first_alloc_blk) + self.cur_offset as u64;
+        let read_len = if (self.len - self.cur_offset) > buf.len() {
+            buf.len()
+        } else {
+            self.len - self.cur_offset
+        };
+        self.vol.reader.seek(SeekFrom::Start(start))?;
+        self.vol.reader.read_exact(&mut buf[..read_len])?;
+        self.cur_offset += read_len;
+
+        Ok(read_len)
+    }
+}
+
+impl<'a, R: Read + Seek> Seek for FileReader<'a, R> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        match pos {
+            SeekFrom::Start(off) => self.cur_offset = off as usize,
+            SeekFrom::End(off) => self.cur_offset = (self.len as i64 + off) as usize,
+            SeekFrom::Current(off) => self.cur_offset = (self.cur_offset as i64 + off) as usize,
+        }
+
+        Ok(self.cur_offset as u64)
+    }
+}
+
 pub struct HfsVolume<R: Read + Seek> {
     hdr: Hfs,
     base: u64,
@@ -82,21 +121,27 @@ impl<R: Read + Seek> HfsVolume<R> {
             reader,
         })
     }
-    pub fn file_data(&mut self, file: &File) -> BinResult<Vec<u8>> {
+    fn alloc_blk_offset(&self, blk: u16) -> u64 {
+        self.hdr.mdb.alloc_block_offset(blk) as u64 + self.base
+    }
+    pub fn file_reader<'a>(&'a mut self, file: &File) -> FileReader<'a, R> {
         let data = self.hdr.catalog_file.record_by_id(file.id).unwrap();
         let CatalogRecordData::File { data_extent, data_len, .. } = data else {
-            panic!()
+            panic!("should i even handle this case?")
         };
+        let data_extent = data_extent.clone();
+        let data_len = *data_len as usize;
 
-        println!("{:x?} {:x}", data_extent, data_len);
-
-        let start = self.hdr.mdb.alloc_block_offset(data_extent.0[0].first_alloc_blk) as u64 + self.base;
-        let len = *data_len as usize;
-
-        self.reader.seek(SeekFrom::Start(start))?;
-        let mut buf = vec![0; len];
-        self.reader.read_exact(&mut buf)?;
-
+        FileReader {
+            vol: self,
+            cur_offset: 0,
+            len: data_len,
+            extents: data_extent,
+        }
+    }
+    pub fn file_data(&mut self, file: &File) -> std::io::Result<Vec<u8>> {
+        let mut buf = Vec::new();
+        self.file_reader(file).read_to_end(&mut buf)?;
         Ok(buf)
     }
     pub fn root_dir(&self) -> Directory {
@@ -122,9 +167,16 @@ pub struct Hfs {
     volume_bitmap: Vec<u8>,
     #[brw(seek_before = SeekFrom::Start(mdb.catalog_file_start() as u64))]
     catalog_file: CatalogFile,
+    //#[brw(seek_before = SeekFrom::Start(mdb.extents_overflow_file_start() as u64))]
+    //extents_overflow: ExtentsOverflowFile,
 }
 
 impl Hfs {
+    fn alloc_blk_occupied(&self, blk: u16) -> bool {
+        let byte = (blk / 8) as usize;
+        let bit = blk % 8;
+        self.volume_bitmap[byte] & (1 << bit) != 0
+    }
     fn root_dir(&self) -> Directory {
         let mut dirs = Vec::new();
         let mut files = Vec::new();

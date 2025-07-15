@@ -89,11 +89,9 @@ fn main() -> Result<()> {
         Format::Hfs => {
             let mut fs = HfsVolume::new(file)?;
             let root = fs.root_dir();
-            println!("{:#x?}", root);
-            /*let file = root.file_by_name("macOS.GIF").unwrap();
-            println!("{:#x?}", file);
+            let file = root.file_by_name("default.html").unwrap();
             let data = fs.file_data(&file).unwrap();
-            std::fs::write("./out", data).unwrap();*/
+            std::fs::write("./out", data).unwrap();
         },
         Format::Autodetect => unreachable!(),
         _ => todo!("{:?} disk format", fmt),
