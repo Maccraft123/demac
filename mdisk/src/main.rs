@@ -4,7 +4,7 @@ use std::fs::File;
 
 use anyhow::{bail, Result};
 use binrw::BinRead;
-use clap::{Parser, ValueEnum};
+use clap::{Parser, ValueEnum, Subcommand};
 use comfy_table::Table;
 use macfmt::apm::{ApmDrive, Driver, Partition};
 use macfmt::fs::hfs::HfsVolume;
@@ -16,6 +16,8 @@ struct Args {
     input: PathBuf,
     #[arg(short, long)]
     mount: Option<PathBuf>,
+    #[command(subcommand)]
+    op: Operation,
 }
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
@@ -24,6 +26,25 @@ enum Format {
     Mfs,
     Apm,
     Autodetect,
+}
+
+#[derive(Debug, Copy, Clone, ValueEnum)]
+enum Fork {
+    Resource,
+    Data,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum Operation {
+    Ls {
+        #[arg(default_value = "/")]
+        path: String,
+    },
+    Get {
+        src: String,
+        fork: Fork,
+        dst: PathBuf,
+    },
 }
 
 fn show_partitions(partitions: &[Partition]) {
@@ -89,9 +110,58 @@ fn main() -> Result<()> {
         Format::Hfs => {
             let mut fs = HfsVolume::new(file)?;
             let root = fs.root_dir();
-            let file = root.file_by_name("default.html").unwrap();
-            let data = fs.file_data(&file).unwrap();
-            std::fs::write("./out", data).unwrap();
+            match args.op {
+                Operation::Ls { path } => {
+                    let mut dir = &root;
+                    for seg in path.split("/").filter(|s| !s.is_empty()) {
+                        if let Some(d) = dir.subdir(seg) {
+                            dir = d;
+                        } else {
+                            if let Some(file) = dir.file(&seg) {
+                                bail!("Not a directory: {:?}", seg);
+                            } else {
+                                bail!("No such directory: {:?}", seg);
+                            }
+                        }
+                    }
+                    for file in dir.files() {
+                        println!("File '{}'", file.name());
+                    }
+                    for subdir in dir.subdirs() {
+                        println!("Dir '{}'", subdir.name());
+                    }
+                    if dir.files().is_empty() && dir.subdirs().is_empty() {
+                        println!("<empty>");
+                    }
+                },
+                Operation::Get { src, fork, dst } => {
+                    let mut dir = &root;
+                    let (path, filename) = src.rsplit_once("/")
+                        .expect("i don't know how to name this error message");
+
+                    for seg in path.split("/").filter(|s| !s.is_empty()) {
+                        if let Some(d) = dir.subdir(seg) {
+                            dir = d;
+                        } else {
+                            if let Some(file) = dir.file(&seg) {
+                                bail!("Not a directory: {:?}", seg);
+                            } else {
+                                bail!("No such directory: {:?}", seg);
+                            }
+                        }
+                    }
+                    
+                    let Some(file) = dir.file(filename) else {
+                        bail!("No such file: '{:?}'", filename);
+                    };
+
+                    let data = fs.file_data(&file).unwrap();
+                    if data.len() == 0 {
+                        bail!("Refusing to write an empty file");
+                    }
+                    std::fs::write(dst, &data)?;
+                },
+            }
         },
         Format::Autodetect => unreachable!(),
         _ => todo!("{:?} disk format", fmt),

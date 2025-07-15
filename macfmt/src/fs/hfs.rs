@@ -21,6 +21,9 @@ impl File {
             id,
         }
     }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -49,17 +52,20 @@ impl Directory {
             subdir.visit_subdirs(f);
         }
     }
-    pub fn file_by_name(&self, name: &str) -> Option<&File> {
-        if let Some(file) = self.files.iter().find(|f| f.name == name) {
-            return Some(file)
-        }
-        for subdir in self.subdirs.iter() {
-            if let Some(file) = subdir.file_by_name(name) {
-                return Some(file)
-            }
-        }
-
-        None
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn subdirs(&self) -> &[Directory] {
+        &self.subdirs
+    }
+    pub fn files(&self) -> &[File] {
+        &self.files
+    }
+    pub fn subdir(&self, name: &str) -> Option<&Directory> {
+        self.subdirs.iter().find(|dir| dir.name == name)
+    }
+    pub fn file(&self, name: &str) -> Option<&File> {
+        self.files.iter().find(|file| file.name == name)
     }
 }
 
