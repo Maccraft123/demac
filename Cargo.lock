@@ -2263,6 +2263,7 @@ dependencies = [
  "bitvec",
  "crc",
  "derivative",
+ "either",
  "flate2",
  "fuser",
  "image",

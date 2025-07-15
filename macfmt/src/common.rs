@@ -46,7 +46,7 @@ pub struct PascalString<const CAP: usize> {
 }
 
 impl<const CAP: usize> PascalString<CAP> {
-    fn try_as_str(&self) -> Result<&str, Utf8Error> {
+    pub fn try_as_str(&self) -> Result<&str, Utf8Error> {
         str::from_utf8(&self.data[..(self.len as usize)])
     }
 }
@@ -238,7 +238,7 @@ pub struct Rect {
     pub bottom_right: Point,
 }
 
-#[derive(Debug, Clone, BinRead, BinWrite)]
+#[derive(Debug, Clone, BinRead, BinWrite, Eq, PartialEq)]
 #[brw(big)]
 pub struct FinderInfo {
     file_type: SizedString<4>,
@@ -248,7 +248,7 @@ pub struct FinderInfo {
     parent_dir: u16,
 }
 
-#[derive(Debug, Clone, BinRead, BinWrite)]
+#[derive(Debug, Clone, BinRead, BinWrite, Eq, PartialEq)]
 #[brw(big)]
 pub struct ExtraFinderInfo {
     #[brw(pad_after = 6)]

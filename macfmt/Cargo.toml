@@ -12,6 +12,7 @@ bitvec = "1.0.1"
 crc = "3.3.0"
 
 derivative = "2.2.0"
+either = "1.15.0"
 fuser = "0.15.1"
 image = "0.25.6"
 libc = "0.2.174"

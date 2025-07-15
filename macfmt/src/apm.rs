@@ -4,7 +4,7 @@ use binrw::io::{Read, Seek, SeekFrom};
 use binrw::{BinRead, BinResult, NullString, binread};
 use derivative::Derivative;
 
-use crate::fs::hfs::HfsVolume;
+use crate::fs::hfs::Hfs;
 
 pub struct ApmDrive<'a, R: Read + Seek> {
     table: ApmTable,
@@ -25,7 +25,7 @@ impl<'a, R: Read + Seek> ApmDrive<'a, R> {
     pub fn drivers(&self) -> &[Driver] {
         &self.table.driver_descriptor.drivers
     }
-    pub fn partition_hfs(&mut self, _p: &Partition) -> BinResult<HfsVolume> {
+    pub fn partition_hfs(&mut self, _p: &Partition) -> BinResult<Hfs> {
         todo!()
     }
     pub fn read_partition_data(&mut self, p: &Partition) -> BinResult<Vec<u8>> {

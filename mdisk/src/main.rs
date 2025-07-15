@@ -7,7 +7,7 @@ use binrw::BinRead;
 use clap::{Parser, ValueEnum};
 use comfy_table::Table;
 use macfmt::apm::{ApmDrive, Driver, Partition};
-use macfmt::fs::mfs::Mfs;
+use macfmt::fs::hfs::HfsVolume;
 
 #[derive(Debug, Clone, Parser)]
 struct Args {
@@ -62,47 +62,42 @@ fn main() -> Result<()> {
     let mut file = File::open(args.input)?;
     let fmt = match args.format {
         Format::Autodetect => {
-            let mut magic = [0u8; 2];
-            file.read_exact(&mut magic)?;
+            let mut sector0 = [0u8; 0x200];
+            file.read_exact(&mut sector0)?;
             file.rewind()?;
-            match &magic {
-                b"LK" | b"\0\0" => {
-                    let mut more_magic = [0u8; 2];
-                    file.seek(SeekFrom::Start(1024))?;
-                    file.read_exact(&mut more_magic)?;
-                    file.rewind()?;
+            let apm = &sector0[0..2] == b"ER";
 
-                    match &more_magic {
-                        b"\xD2\xD7" => Format::Mfs,
-                        b"BD" => Format::Hfs,
-                        _ => bail!("Unknown sector 1 magic bytes {:02x?}", magic),
-                    }
-                },
-                b"ER" => Format::Apm,
-                _ => bail!("Unknown sector 0 magic bytes {:02x?}", magic),
+            if !apm {
+                let mut more_magic = [0u8; 2];
+                file.seek(SeekFrom::Start(1024))?;
+                file.read_exact(&mut more_magic)?;
+                file.rewind()?;
+
+                match &more_magic {
+                    b"\xD2\xD7" => Format::Mfs,
+                    b"BD" => Format::Hfs,
+                    _ => bail!("Unknown sector 1 magic bytes {:02x?}", more_magic),
+                }
+            } else {
+                Format::Apm
             }
         },
         _ => args.format,
     };
-/*
-    match fmt {
-        Format::Apm => {
-            let disk = ApmDrive::new(&mut file)?;
 
-            show_partitions(disk.partitions());
-            show_drivers(disk.drivers());
-        },
-        Format::Mfs => {
-            let vol = Mfs::new(&mut file)?;
-            println!("{:#x?}", vol);
-            if let Some(point) = args.mount {
-                let fuse = macfmt::mfs::fuse::MfsFuse::new(vol);
-                fuse.mount(&point)?;
-            }
+    match fmt {
+        Format::Hfs => {
+            let mut fs = HfsVolume::new(file)?;
+            let root = fs.root_dir();
+            println!("{:#x?}", root);
+            /*let file = root.file_by_name("macOS.GIF").unwrap();
+            println!("{:#x?}", file);
+            let data = fs.file_data(&file).unwrap();
+            std::fs::write("./out", data).unwrap();*/
         },
         Format::Autodetect => unreachable!(),
         _ => todo!("{:?} disk format", fmt),
     }
-*/
+
     Ok(())
 }
