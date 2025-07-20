@@ -13,6 +13,14 @@ use super::BootBlocks;
 
 //pub mod fuse;
 
+// Inside_Macintosh_Promotional_Edition_1985 also talks about flie tags:
+// file_num: u32,
+// fork_type: u8, // 0x00 -> data, 0x01 -> resource
+// attrs: u8, // bit 7 -> open, bit 0 -> locked
+// file_seq: u16, // block number of this file
+// mtime: DateTime,
+
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Fork {
     Resource,

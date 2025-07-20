@@ -6,8 +6,12 @@ use anyhow::{bail, Result};
 use binrw::BinRead;
 use clap::{Parser, ValueEnum, Subcommand};
 use comfy_table::Table;
+use humansize::{format_size, DECIMAL};
 use macfmt::apm::{ApmDrive, Driver, Partition};
-use macfmt::fs::hfs::HfsVolume;
+use macfmt::fs::{
+    hfs::HfsVolume,
+    mfs::Mfs,
+};
 
 #[derive(Debug, Clone, Parser)]
 struct Args {
@@ -43,7 +47,7 @@ enum Operation {
     Get {
         src: String,
         fork: Fork,
-        dst: PathBuf,
+        dst: Option<PathBuf>,
     },
 }
 
@@ -159,7 +163,36 @@ fn main() -> Result<()> {
                     if data.len() == 0 {
                         bail!("Refusing to write an empty file");
                     }
-                    std::fs::write(dst, &data)?;
+                    let dst = dst.unwrap_or(filename.into());
+                    std::fs::write(&dst, &data)?;
+                    println!("Written {} to {}", format_size(data.len(), DECIMAL), dst.display());
+                },
+            }
+        },
+        Format::Mfs => {
+            let mut fs = Mfs::new(&mut file)?;
+            println!("{:#x?}", fs);
+            match args.op {
+                Operation::Ls { .. } => {
+                    todo!()
+                },
+                Operation::Get { src, fork, dst } => {
+                    let src = src.trim_start_matches("/");
+                    let Some(file) = fs.file_by_name(src) else {
+                        bail!("No such file: {}", src);
+                    };
+                    use macfmt::fs::mfs;
+                    let fork = match fork {
+                        Fork::Resource => mfs::Fork::Resource,
+                        Fork::Data => mfs::Fork::Data,
+                    };
+                    let data = fs.file_contents(file, fork);
+                    if data.len() == 0 {
+                        bail!("Refusing to write an empty file");
+                    }
+                    let dst = dst.unwrap_or(src.into());
+                    std::fs::write(&dst, &data)?;
+                    println!("Written {} to {}", format_size(data.len(), DECIMAL), dst.display());
                 },
             }
         },

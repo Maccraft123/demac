@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::i18n::{MacRoman, MacScript};
 use binrw::{BinRead, BinResult, BinWrite};
+use bitflags::bitflags;
 use bitfield_struct::bitfield;
 use time::OffsetDateTime;
 
@@ -243,9 +244,29 @@ pub struct Rect {
 pub struct FinderInfo {
     file_type: SizedString<4>,
     file_creator: SizedString<4>,
-    flags: u16,
+    #[br(map = |v: u16| FInfoFlags::from_bits_retain(v))]
+    #[bw(map = |f: &FInfoFlags| f.bits())]
+    flags: FInfoFlags,
     location: Point,
-    parent_dir: u16,
+    window: FInfoWindow,
+}
+
+bitflags! {
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub struct FInfoFlags: u16 {
+        const ON_DESKTOP = 1 << 0;
+        const HAS_BUNDLE = 1 << 13;
+        const INVISIBLE = 1 << 14;
+    }
+}
+
+#[derive(Debug, Copy, Clone, BinRead, BinWrite, Eq, PartialEq)]
+#[brw(big)]
+pub enum FInfoWindow {
+    #[brw(magic = b"\x00\x00")] Disk,
+    #[brw(magic = b"\xff\xfe")] Desktop,
+    #[brw(magic = b"\xff\xfd")] Trash,
+    Folder(u16),
 }
 
 #[derive(Debug, Clone, BinRead, BinWrite, Eq, PartialEq)]

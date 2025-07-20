@@ -12,14 +12,24 @@ use super::BootBlocks;
 pub struct File {
     name: String,
     id: Cnid,
+    data_len: u32,
+    rsrc_len: u32,
 }
 
 impl File {
-    fn new(name: &DynamicPascalString, id: Cnid) -> File {
+    fn new(name: &DynamicPascalString, id: Cnid, data_len: u32, rsrc_len: u32) -> File {
         File {
             name: name.try_as_str().unwrap().trim().to_string(),
             id,
+            data_len,
+            rsrc_len,
         }
+    }
+    pub fn rsrc_len(&self) -> u32 {
+        self.rsrc_len
+    }
+    pub fn data_len(&self) -> u32 {
+        self.data_len
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -82,6 +92,9 @@ impl<'a, R: Read + Seek> Read for FileReader<'a, R> {
             return Ok(0);
         }
 
+        if self.extents.0[1].first_alloc_blk != 0 {
+            todo!("files with more than one extent")
+        }
         let start = self.vol.alloc_blk_offset(self.extents.0[0].first_alloc_blk) + self.cur_offset as u64;
         let read_len = if (self.len - self.cur_offset) > buf.len() {
             buf.len()
@@ -194,8 +207,8 @@ impl Hfs {
                             CatalogRecordData::Directory { id, flags, .. } => {
                                 dirs.push((parent_id, Directory::new(name, *id)));
                             },
-                            CatalogRecordData::File { id, .. } => {
-                                files.push((parent_id, File::new(name, *id)));
+                            CatalogRecordData::File { id, data_len, rsrc_len, .. } => {
+                                files.push((parent_id, File::new(name, *id, *data_len, *rsrc_len)));
                             },
                             // what do i do with file and dir threads?
                             _ => (),

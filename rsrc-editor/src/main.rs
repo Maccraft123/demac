@@ -615,7 +615,7 @@ impl eframe::App for MyApp {
                                 }
                             }
                             other => {
-                                ui.label(format!("Unimplemented data type: {:?}", other));
+                                ui.label(format!("Unimplemented data type: {:#x?}", other));
                             }
                         }
                     });

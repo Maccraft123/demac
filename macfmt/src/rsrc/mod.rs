@@ -41,6 +41,7 @@ impl Resource {
     }
     pub fn read<R: Read + Seek>(reader: &mut R) -> BinResult<Vec<(ResourceType, Vec<Resource>)>> {
         let raw = RawResource::read(reader)?;
+        println!("here");
         let mut ret = Vec::new();
         let mut decomped = false;
         for t in raw.types.iter() {
@@ -79,6 +80,7 @@ impl Resource {
                     raw.data_of(r).to_owned()
                 };
 
+                println!("decoding {:x?} {:x?}", t.ty, r.res_id);
                 let data = types::Type::new(&t.ty, r.res_id, data)?;
                 refs.push(Resource {
                     id: r.res_id,

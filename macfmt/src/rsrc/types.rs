@@ -4,7 +4,7 @@ use bitflags::bitflags;
 use bitvec::field::BitField;
 use bitvec::view::BitView;
 use super::ResourceType;
-use crate::common::{DateTime, DynamicPascalString, Point, Rect, SizedString};
+use crate::common::{DateTime, DynamicPascalString, Point, Rect, SizedString, Style};
 use crate::i18n::{RegionCode, MacRoman, MacScript};
 use bitvec::order::Msb0;
 use derivative::Derivative;
@@ -66,9 +66,9 @@ impl Type {
                 Type::RomOverride(RomOverride::read(&mut cursor)?)
             }
             ResourceType::String => Type::String(DynamicPascalString::read(&mut cursor)?),
-            ResourceType::SystemVersion => {
+            /*ResourceType::SystemVersion => {
                 Type::SystemVersion(DynamicPascalString::read(&mut cursor)?)
-            }
+            }*/
             ResourceType::StringList => Type::StringList(StringList::read(&mut cursor)?),
             ResourceType::MfsFolderInfo => Type::MfsFolder(MfsFolder::read(&mut cursor)?),
             ResourceType::Size => Type::Size(Size::read(&mut cursor)?),
@@ -882,7 +882,7 @@ pub struct MenuItem {
     text: DynamicPascalString,
     #[br(parse_with = MenuItemConfig::parser)]
     cfg: MenuItemConfig,
-    style: u8,
+    style: Style,
 }
 
 impl MenuItem {
@@ -1083,19 +1083,26 @@ bitflags! {
 #[derivative(Debug)]
 #[brw(big)]
 pub struct MfsFolder {
-    ty: u16,
+    ty: MfsFolderType,
     icon_pos: Point,
     unk1: u32,
-    unk2: u16,
-    parent: u16,
-    unk3: u32,
-    unk4: u32,
-    unk5: u32,
+    view: u8,
+    unk2: u8,
+    parent: i16,
+    unk3: [u8; 10],
     crtime: DateTime,
     mtime: DateTime,
-    backup_date: DateTime,
-    flags: u16,
-    unk6: u8,
+    unk4: u16,
+    bounds: Rect,
+    scroll_offset: Point,
+}
+
+#[derive(Clone, Derivative, BinRead, BinWrite, Eq, PartialEq)]
+#[derivative(Debug)]
+#[brw(big)]
+pub enum MfsFolderType {
+    #[brw(magic = b"\x00\x04")] Disk,
+    #[brw(magic = b"\x00\x08")] Folder,
 }
 
 #[derive(Display, EnumIter, FromRepr, Copy, Clone, Debug, Eq, PartialEq, Hash)]
