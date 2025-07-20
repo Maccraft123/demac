@@ -281,6 +281,7 @@ pub struct ExtraFinderInfo {
 }
 
 #[bitfield(u8)]
+#[derive(Eq, PartialEq)]
 pub struct Style {
     bold: bool,
     italic: bool,

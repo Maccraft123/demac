@@ -894,10 +894,10 @@ impl MenuItem {
                 keyboard_shortcut: None,
                 marking_character: None,
             },
-            style: 0,
+            style: Style::new(),
         }
     }
-    pub fn style(&self) -> u8 {
+    pub fn style(&self) -> Style {
         self.style
     }
     pub fn text_mut(&mut self) -> &mut String {

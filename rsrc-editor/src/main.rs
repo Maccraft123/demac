@@ -370,7 +370,7 @@ impl eframe::App for MyApp {
                                             to_remove = Some(i);
                                         };
                                         ui.text_edit_singleline(item.text_mut());
-                                        ui.label(format!("{}", item.style()));
+                                        ui.label(format!("{:#?}", item.style()));
                                         match item.cfg() {
                                             MenuItemConfig::Plain {
                                                 icon,
